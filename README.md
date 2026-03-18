@@ -5,22 +5,22 @@ and Clifford deformations.
 
 ## Repository structure
 
-- Tile_code_and_clifford_deformation  
+- tile_code_and_clifford_deformation  
   Tile code construction and Clifford deformation routines.
 
-- Infinite_bias_threshold  
+- infinite_bias_threshold  
   Simulations for infinite bias threshold.
 
 - finite_bias_circuit_level_simulation  
   Circuit-level simulations under finite bias noise.
 
-- Finite_bias_code_capacity_model  
+- finite_bias_code_capacity_model  
   Code-capacity simulations under finite bias noise.
 
-- Error_propagation  
+- error_propagation  
   Tools for analyzing Pauli error propagation in circuits.
 
-- BLO_study  
+- blo_study  
   Scripts for studying basis logical operators.
 
 ## Requirements
@@ -37,18 +37,6 @@ matplotlib
 
 Example:
 
-python finite_bias_circuit_level_simulation/Circuit_level_CSS.py 9 9 --bias 10000
+python finite_bias_circuit_level_simulation/circuit_level_css.py 9 9 --bias 10000
 
-where l and m are the lattice dimensions, and bias is the Z-bias parameter of the Pauli noise model.
-
-## Code availability
-
-The code used in this work is available at:
-
-https://github.com/JD0111phys/Biased_noise_tile_code
-
-## Contributors
-
-Jagannath Das  
-Sayandip Dhara  
-Pedro Medina
+where `l` and `m` are the lattice dimensions, and `bias` is the Z-bias parameter of the Pauli noise model.
