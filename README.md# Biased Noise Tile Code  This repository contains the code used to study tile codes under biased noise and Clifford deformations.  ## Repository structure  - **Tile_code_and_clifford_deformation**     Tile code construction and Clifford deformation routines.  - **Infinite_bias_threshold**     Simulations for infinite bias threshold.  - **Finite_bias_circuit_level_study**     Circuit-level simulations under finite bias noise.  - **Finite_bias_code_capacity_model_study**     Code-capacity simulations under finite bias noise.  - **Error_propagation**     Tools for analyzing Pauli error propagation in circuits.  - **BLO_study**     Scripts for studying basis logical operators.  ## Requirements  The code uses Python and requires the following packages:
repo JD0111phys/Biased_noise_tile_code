@@ -11,10 +11,10 @@ and Clifford deformations.
 - **Infinite_bias_threshold**  
   Simulations for infinite bias threshold.
 
-- **Finite_bias_circuit_level_study**  
+- **Finite_bias_circuit_level_simulations**  
   Circuit-level simulations under finite bias noise.
 
-- **Finite_bias_code_capacity_model_study**  
+- **Finite_bias_code_capacity_model**  
   Code-capacity simulations under finite bias noise.
 
 - **Error_propagation**  
