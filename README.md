@@ -1,0 +1,50 @@
+# Biased Noise Tile Code
+
+This repository contains the code used to study tile codes under biased noise
+and Clifford deformations.
+
+## Repository structure
+
+- **Tile_code_and_clifford_deformation**  
+  Tile code construction and Clifford deformation routines.
+
+- **Infinite_bias_threshold**  
+  Simulations for infinite bias threshold.
+
+- **finite_bias_circuit_level_simulation**  
+  Circuit-level simulations under finite bias noise.
+
+- **Finite_bias_code_capacity_model**  
+  Code-capacity simulations under finite bias noise.
+
+- **Error_propagation**  
+  Tools for analyzing Pauli error propagation in circuits.
+
+- **BLO_study**  
+  Scripts for studying basis logical operators.
+
+## Requirements
+
+The code uses Python and requires the following packages:
+
+```
+numpy
+scipy
+stim
+ldpc
+matplotlib
+```
+
+## Running simulations
+
+Example:
+
+```
+python finite_bias_circuit_level_simulation/Circuit_level_CSS.py
+```
+
+## Code availability
+
+The code used in this work is available at:
+
+https://github.com/JD0111phys/Biased_noise_tile_code
