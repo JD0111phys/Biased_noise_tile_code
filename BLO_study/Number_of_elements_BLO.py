@@ -1,5 +1,5 @@
 """
-Periodic tile-code BLO study for one sample deformation point.
+BLO study for one sample deformation.
 
 This script constructs the periodic tile code on an l x m lattice, applies
 a probabilistic Clifford deformation to the full CSS parity-check matrix,
