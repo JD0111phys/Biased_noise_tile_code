@@ -27,11 +27,21 @@ and Clifford deformations.
 
 The code uses Python and requires the following packages:
 
-numpy  
-scipy  
-stim  
-ldpc  
-matplotlib  
+# Core computation & data structures
+numpy
+scipy
+pandas
+
+# Quantum Simulation
+stim
+sinter
+bposd
+ldpc
+galois
+
+# Utilities
+tqdm
+pytest 
 
 ## Running simulations
 
