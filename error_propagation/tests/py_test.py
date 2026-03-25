@@ -100,7 +100,7 @@ def test_get_pauli_string_uses_custom_initial_pauli_string() -> None:
 
 # Error at the end of circuit Tests
 # Load XXZX 4-qubit circuit Initial Pauli strings and Error propagations
-with open("xzzx_export.json", "r") as f:
+with open(Path(__file__).parent / "xzzx_export.json", "r") as f:
     data = json.load(f)
 
 init_Pauli_strings = data["seq_strings"]
@@ -208,7 +208,7 @@ def test_4_qubit_XZZX_circuit_random_seed_consistency_2() -> None:
 
 	assert samples1 != samples2
 # Load XYHS 4-qubit circuit Initial Pauli strings and Error propagations
-with open("xyhs_export.json", "r") as f:
+with open(Path(__file__).parent / "xyhs_export.json", "r") as f:
     data_xyhs = json.load(f)
 
 init_Pauli_strings_xyhs = data_xyhs["seq_strings"]
@@ -549,3 +549,92 @@ def test_ideal_platform_skips_hardware_gate_error_channel() -> None:
 	assert all(v == 0 for v in ideal_samples)
 	# Hardware platform can still inject gate-channel noise independently of p.
 	assert any(v != 0 for v in hw_samples)
+
+
+def test_ideal_propagation_h_gate() -> None:
+	# X through H -> Z
+	samples_x = get_pauli_string(
+		keep_qubits=[0], samples=1, p=0.0, system_bias=10.0,
+		gate_sequence=[("H", [0])], ancilla=[], qubit_platform="ideal", random_seed=123,
+		initial_pauli_string="X"
+	)
+	assert samples_x == [3]  # Z is 3
+
+	# Z through H -> X
+	samples_z = get_pauli_string(
+		keep_qubits=[0], samples=1, p=0.0, system_bias=10.0,
+		gate_sequence=[("H", [0])], ancilla=[], qubit_platform="ideal", random_seed=123,
+		initial_pauli_string="Z"
+	)
+	assert samples_z == [1]  # X is 1
+
+
+def test_ideal_propagation_s_gate() -> None:
+	# X through S -> Y
+	samples_x = get_pauli_string(
+		keep_qubits=[0], samples=1, p=0.0, system_bias=10.0,
+		gate_sequence=[("S", [0])], ancilla=[], qubit_platform="ideal", random_seed=123,
+		initial_pauli_string="X"
+	)
+	assert samples_x == [2]  # Y is 2
+
+	# Y through S -> X
+	samples_y = get_pauli_string(
+		keep_qubits=[0], samples=1, p=0.0, system_bias=10.0,
+		gate_sequence=[("S", [0])], ancilla=[], qubit_platform="ideal", random_seed=123,
+		initial_pauli_string="Y"
+	)
+	assert samples_y == [1]  # X is 1
+
+
+def test_ideal_propagation_cx_gate() -> None:
+	# XI through CX -> XX
+	samples_xi = get_pauli_string(
+		keep_qubits=[0, 1], samples=1, p=0.0, system_bias=10.0,
+		gate_sequence=[("CX", [0, 1])], ancilla=[], qubit_platform="ideal", random_seed=123,
+		initial_pauli_string="XI"
+	)
+	assert samples_xi == [1, 1]  # XX
+
+	# IX through CX -> IX
+	samples_ix = get_pauli_string(
+		keep_qubits=[0, 1], samples=1, p=0.0, system_bias=10.0,
+		gate_sequence=[("CX", [0, 1])], ancilla=[], qubit_platform="ideal", random_seed=123,
+		initial_pauli_string="IX"
+	)
+	assert samples_ix == [0, 1]  # IX
+
+	# ZI through CX -> ZI
+	samples_zi = get_pauli_string(
+		keep_qubits=[0, 1], samples=1, p=0.0, system_bias=10.0,
+		gate_sequence=[("CX", [0, 1])], ancilla=[], qubit_platform="ideal", random_seed=123,
+		initial_pauli_string="ZI"
+	)
+	assert samples_zi == [3, 0]  # ZI
+
+	# IZ through CX -> ZZ
+	samples_iz = get_pauli_string(
+		keep_qubits=[0, 1], samples=1, p=0.0, system_bias=10.0,
+		gate_sequence=[("CX", [0, 1])], ancilla=[], qubit_platform="ideal", random_seed=123,
+		initial_pauli_string="IZ"
+	)
+	assert samples_iz == [3, 3]  # ZZ
+
+
+def test_ideal_propagation_cz_gate() -> None:
+	# XI through CZ -> XZ
+	samples_xi = get_pauli_string(
+		keep_qubits=[0, 1], samples=1, p=0.0, system_bias=10.0,
+		gate_sequence=[("CZ", [0, 1])], ancilla=[], qubit_platform="ideal", random_seed=123,
+		initial_pauli_string="XI"
+	)
+	assert samples_xi == [1, 3]  # XZ
+
+	# IX through CZ -> ZX
+	samples_ix = get_pauli_string(
+		keep_qubits=[0, 1], samples=1, p=0.0, system_bias=10.0,
+		gate_sequence=[("CZ", [0, 1])], ancilla=[], qubit_platform="ideal", random_seed=123,
+		initial_pauli_string="IX"
+	)
+	assert samples_ix == [3, 1]  # ZX
+

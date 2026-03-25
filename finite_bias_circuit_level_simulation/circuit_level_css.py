@@ -20,7 +20,10 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 import numpy as np
 import sinter
 import stim
-from stimbposd import sinter_decoders
+try:
+    from stimbposd import sinter_decoders
+except ImportError:
+    pass
 
 
 def xyz_from_bias(p_total: float, r_bias: float) -> Tuple[float, float, float]:
@@ -204,7 +207,7 @@ def finish_tile_code_circuit(
         head.append_operation(
             "DETECTOR",
             [stim.target_rec(-len(measurement_qubits) + measure_coord_to_order[measure])],
-            [measure.real, measure.imag, 0.0],
+            [measure.real, measure.imag, 0.0, 0.0 if measure in x_measure_coords else 3.0],
         )
 
     body = cycle_actions.copy()
@@ -218,7 +221,7 @@ def finish_tile_code_circuit(
             body.append_operation(
                 "DETECTOR",
                 [stim.target_rec(-k - 1), stim.target_rec(-k - 1 - m)],
-                [m_coord.real, m_coord.imag, 0.0],
+                [m_coord.real, m_coord.imag, 0.0, 0.0 if m_coord in x_measure_coords else 3.0],
             )
 
     tail = stim.Circuit()
@@ -240,7 +243,7 @@ def finish_tile_code_circuit(
         tail.append_operation(
             "DETECTOR",
             [stim.target_rec(x) for x in detectors],
-            [measure.real, measure.imag, 1.0],
+            [measure.real, measure.imag, 1.0, 0.0 if measure in x_measure_coords else 3.0],
         )
 
     for obs_id, logical in enumerate(chosen_basis_observable):
