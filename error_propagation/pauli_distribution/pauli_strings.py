@@ -16,6 +16,148 @@ import json
 
 GateOp = Tuple[str, List[int]]
 
+_SINGLE_QUBIT_ERROR_CHOICES: Tuple[str, ...] = ("I", "X", "Y", "Z")
+_PAULI_ERROR_CHOICES: Tuple[str, ...] = ("X", "Y", "Z", "I")
+_TWO_QUBIT_ERROR_CHOICES: Tuple[str, ...] = (
+    "II", "IX", "IY", "IZ",
+    "XI", "XX", "XY", "XZ",
+    "YI", "YX", "YY", "YZ",
+    "ZI", "ZX", "ZY", "ZZ",
+)
+
+
+def _ordered_weights(probabilities: Dict[str, float], order: Tuple[str, ...]) -> Tuple[float, ...]:
+    return tuple(probabilities[label] for label in order)
+
+
+_SC_CX_PROBS: Dict[str, float] = {
+    'II': 0.9971089697418947,
+    'IX': 2.7934102919680015e-08,
+    'IY': 2.3735336432129106e-06,
+    'IZ': 0.0007172714715934017,
+    'XI': 2.7711807848440628e-08,
+    'XX': 2.5207188356080046e-07,
+    'XY': 0.00023518786621833793,
+    'XZ': 2.5886150639697902e-08,
+    'YI': 2.3732742409909857e-06,
+    'YX': 0.00023518786621884447,
+    'YY': 2.5207741582294885e-07,
+    'YZ': 2.5808276786498663e-08,
+    'ZI': 0.0007125772927424889,
+    'ZX': 2.5887020388415394e-08,
+    'ZY': 2.579754807691126e-08,
+    'ZZ': 0.0009853957792419835,
+}
+
+_TI_CNOT_CX_PROBS: Dict[str, float] = {
+    'II': 0.9970978744492904,
+    'IX': 3.3560719574221576e-07,
+    'IY': 0.00028982952089751796,
+    'IZ': 0.00038654305587448867,
+    'XI': 0.0005800408405701243,
+    'XX': 3.275762831961293e-07,
+    'XY': 9.677438302829744e-05,
+    'XZ': 2.860259729967063e-07,
+    'YI': 0.0002907835269792061,
+    'YX': 9.66060922966e-05,
+    'YY': 1.386814579007467e-07,
+    'YZ': 2.580023215695282e-07,
+    'ZI': 0.0009661361035463306,
+    'ZX': 1.1755776622990322e-07,
+    'ZY': 3.137816749348987e-07,
+    'ZZ': 0.00019363479484440366,
+}
+
+_TI_CZ_CZ_PROBS: Dict[str, float] = {
+    'II': 0.997064919955593,
+    'IX': 2.6383893972359296e-08,
+    'IY': 2.6383893986237084e-08,
+    'IZ': 0.0009970331256010934,
+    'XI': 2.6383893972359296e-08,
+    'XX': 2.3561940468153075e-08,
+    'XY': 2.3561940468153075e-08,
+    'XZ': 2.3567419182857208e-08,
+    'YI': 2.6383893972359296e-08,
+    'YX': 2.3561940468153075e-08,
+    'YY': 2.3561940468153075e-08,
+    'YZ': 2.3567419182857208e-08,
+    'ZI': 0.0009970331256011072,
+    'ZX': 2.356741916897942e-08,
+    'ZY': 2.3567419182857208e-08,
+    'ZZ': 0.0009407197401905265,
+}
+
+_NA_CZ_PROBS: Dict[str, float] = {
+    'II': 0.997068734751876,
+    'IX': 2.0905858801045785e-08,
+    'IY': 2.090585879410689e-08,
+    'IZ': 0.0009635217661934578,
+    'XI': 2.0489466380502197e-08,
+    'XX': 2.04892314434324e-08,
+    'XY': 2.0489231478126868e-08,
+    'XZ': 2.0489466380502197e-08,
+    'YI': 2.0489466380502197e-08,
+    'YX': 2.0489231471187974e-08,
+    'YY': 2.0489231450371292e-08,
+    'YZ': 2.048946638744109e-08,
+    'ZI': 0.0008600034582691082,
+    'ZX': 2.0905858801045785e-08,
+    'ZY': 2.090585879410689e-08,
+    'ZZ': 0.0009735718210506714,
+}
+
+_H_PROBS: Dict[str, float] = {
+    'II': 0.9970831318064503,
+    'XI': 0.0004876108844646676,
+    'YI': 0.0009721305333010022,
+    'ZI': 0.0014571267757840511,
+}
+
+_S_PROBS: Dict[str, float] = {
+    'II': 0.9970240579376571,
+    'IX': 1.4922560645502791e-07,
+    'IY': 1.4922560645502791e-07,
+    'IZ': 0.00297564361112998,
+}
+
+_H_WEIGHTS: Tuple[float, ...] = (_H_PROBS['II'], _H_PROBS['XI'], _H_PROBS['YI'], _H_PROBS['ZI'])
+_S_WEIGHTS: Tuple[float, ...] = (_S_PROBS['II'], _S_PROBS['IX'], _S_PROBS['IY'], _S_PROBS['IZ'])
+
+_GATE_ERROR_CHANNELS: Dict[str, Dict[str, Tuple[Tuple[str, ...], Tuple[float, ...], int]]] = {
+    'superconducting': {
+        'CX': (_TWO_QUBIT_ERROR_CHOICES, _ordered_weights(_SC_CX_PROBS, _TWO_QUBIT_ERROR_CHOICES), 2),
+        'H': (_SINGLE_QUBIT_ERROR_CHOICES, _H_WEIGHTS, 1),
+        'S': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, 1),
+        'S_DAG': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, 1),
+    },
+    'trapped_ion_cnot': {
+        'CX': (_TWO_QUBIT_ERROR_CHOICES, _ordered_weights(_TI_CNOT_CX_PROBS, _TWO_QUBIT_ERROR_CHOICES), 2),
+        'H': (_SINGLE_QUBIT_ERROR_CHOICES, _H_WEIGHTS, 1),
+        'S': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, 1),
+        'S_DAG': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, 1),
+    },
+    'trapped_ion_cz': {
+        'CZ': (_TWO_QUBIT_ERROR_CHOICES, _ordered_weights(_TI_CZ_CZ_PROBS, _TWO_QUBIT_ERROR_CHOICES), 2),
+        'H': (_SINGLE_QUBIT_ERROR_CHOICES, _H_WEIGHTS, 1),
+        'S': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, 1),
+        'S_DAG': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, 1),
+    },
+    'neutral_atom': {
+        'CZ': (_TWO_QUBIT_ERROR_CHOICES, _ordered_weights(_NA_CZ_PROBS, _TWO_QUBIT_ERROR_CHOICES), 2),
+        'H': (_SINGLE_QUBIT_ERROR_CHOICES, _H_WEIGHTS, 1),
+        'S': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, 1),
+        'S_DAG': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, 1),
+    },
+    'ideal': {},
+}
+
+_UNSUPPORTED_GATE_ERROR_MESSAGES: Dict[str, str] = {
+    'superconducting': "Unsupported gate {gate_name} for superconducting platform.",
+    'trapped_ion_cnot': "Unsupported gate {gate_name} for trapped ion platform.",
+    'trapped_ion_cz': "Unsupported gate {gate_name} for trapped ion_cz platform.",
+    'neutral_atom': "Unsupported gate {gate_name} for neutral atom platform.",
+}
+
 #----------------- APPLY ERROR FUNCTIONS -----------------#
 
 
@@ -38,11 +180,21 @@ def apply_error(
     Returns:
         Updated Pauli string with errors applied to the qubits in keep_qubits.
     """
+    if not keep_qubits:
+        return pauli
+
     error = list(identity)
+    has_non_identity_error = False
     # Applying Error probability to every qubit in pauli string
     for j in keep_qubits:
-        error_char = random.choices(['X', 'Y', 'Z', 'I'], weights=weights_applied, k=1)[0]
+        error_char = random.choices(_PAULI_ERROR_CHOICES, weights=weights_applied, k=1)[0]
         error[j] = error_char
+        if error_char != 'I':
+            has_non_identity_error = True
+
+    if not has_non_identity_error:
+        return pauli
+
     error_str = ''.join(error)
     # Updating pauli string
     pauli *= PauliString(error_str)
@@ -97,262 +249,102 @@ def apply_gate_error_channel(pauli: PauliString, gate_name: str, targets: List[i
     Raises:
         ValueError: If gate_name is not supported for the given qubit_platform.
     """
-    error = list(identity)
-    if gate_name in ['CX', 'CZ']:
-        tupled_targets = pairwise_tuples(targets)
-    else:
-        tupled_targets = []
+    if qubit_platform == 'ideal':
+        return pauli
 
-
-    if qubit_platform == 'superconducting':
-        # error probabilities for superconducting CX gate
-        if gate_name == 'CX':
-            err_dict_superconducting_CX = {'II': 0.9971089697418947,
- 'IX': 2.7934102919680015e-08,
- 'IY': 2.3735336432129106e-06,
- 'IZ': 0.0007172714715934017,
- 'XI': 2.7711807848440628e-08,
- 'XX': 2.5207188356080046e-07,
- 'XY': 0.00023518786621833793,
- 'XZ': 2.5886150639697902e-08,
- 'YI': 2.3732742409909857e-06,
- 'YX': 0.00023518786621884447,
- 'YY': 2.5207741582294885e-07,
- 'YZ': 2.5808276786498663e-08,
- 'ZI': 0.0007125772927424889,
- 'ZX': 2.5887020388415394e-08,
- 'ZY': 2.579754807691126e-08,
- 'ZZ': 0.0009853957792419835}
-            err_dict_values = list(err_dict_superconducting_CX.values())
-            for control, target in tupled_targets:
-                error_char = random.choices(['II', 'IX', 'IY', 'IZ', 'XI', 'XX', 'XY','XZ',
-                                             'YI', 'YX', 'YY', 'YZ', 'ZI', 'ZX', 'ZY', 'ZZ'],
-                                            weights=err_dict_values, k=1)[0]
-                error_char_list = list(error_char)
-                error[control] = error_char_list[0]
-                error[target] = error_char_list[1]
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'H':
-            err_dict_superconducting_H = {'II': 0.9970831318064503,
- 'XI': 0.0004876108844646676,
- 'YI': 0.0009721305333010022,
- 'ZI': 0.0014571267757840511}
-            err_dict_values = list(err_dict_superconducting_H.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
-                error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'S' or gate_name == 'S_DAG':
-            err_dict_superconducting_S = {'II': 0.9970240579376571,
- 'IX': 1.4922560645502791e-07,
- 'IY': 1.4922560645502791e-07,
- 'IZ': 0.00297564361112998}
-            err_dict_values = list(err_dict_superconducting_S.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
-                error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        else:
-            raise ValueError(f"Unsupported gate {gate_name} for superconducting platform.")
-        
-
-    elif qubit_platform == 'trapped_ion_cnot':
-        if gate_name == 'CX':
-            err_dict_trapped_ion_cnot_CX = {'II': 0.9970978744492904,
- 'IX': 3.3560719574221576e-07,
- 'IY': 0.00028982952089751796,
- 'IZ': 0.00038654305587448867,
- 'XI': 0.0005800408405701243,
- 'XX': 3.275762831961293e-07,
- 'XY': 9.677438302829744e-05,
- 'XZ': 2.860259729967063e-07,
- 'YI': 0.0002907835269792061,
- 'YX': 9.66060922966e-05,
- 'YY': 1.386814579007467e-07,
- 'YZ': 2.580023215695282e-07,
- 'ZI': 0.0009661361035463306,
- 'ZX': 1.1755776622990322e-07,
- 'ZY': 3.137816749348987e-07,
- 'ZZ': 0.00019363479484440366}
-            err_dict_values = list(err_dict_trapped_ion_cnot_CX.values())
-            for control, target in tupled_targets:
-
-                error_char = random.choices(['II', 'IX', 'IY', 'IZ', 'XI', 'XX', 'XY','XZ',
-                                             'YI', 'YX', 'YY', 'YZ', 'ZI', 'ZX', 'ZY', 'ZZ'],
-                                            weights=err_dict_values, k=1)[0]
-                error_char_list = list(error_char)
-                error[control] = error_char_list[0]
-                error[target] = error_char_list[1]
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'H':
-            err_dict_trapped_ion_cnot_H = {'II': 0.9970831318064503,
- 'XI': 0.0004876108844646676,
- 'YI': 0.0009721305333010022,
- 'ZI': 0.0014571267757840511}
-            err_dict_values = list(err_dict_trapped_ion_cnot_H.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
-                error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'S' or gate_name == 'S_DAG':
-            err_dict_trapped_ion_cnot_S = {'II': 0.9970240579376571,
- 'IX': 1.4922560645502791e-07,
- 'IY': 1.4922560645502791e-07,
- 'IZ': 0.00297564361112998}
-            err_dict_values = list(err_dict_trapped_ion_cnot_S.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
-                error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        else:
-            raise ValueError(f"Unsupported gate {gate_name} for trapped ion platform.")
-        
-
-    elif qubit_platform == 'trapped_ion_cz':
-        if gate_name == 'CZ':
-            # error probabilities for trapped ion CZ gate
-            err_dict_trapped_ion_cz_CZ = {'II': 0.997064919955593,
- 'IX': 2.6383893972359296e-08,
- 'IY': 2.6383893986237084e-08,
- 'IZ': 0.0009970331256010934,
- 'XI': 2.6383893972359296e-08,
- 'XX': 2.3561940468153075e-08,
- 'XY': 2.3561940468153075e-08,
- 'XZ': 2.3567419182857208e-08,
- 'YI': 2.6383893972359296e-08,
- 'YX': 2.3561940468153075e-08,
- 'YY': 2.3561940468153075e-08,
- 'YZ': 2.3567419182857208e-08,
- 'ZI': 0.0009970331256011072,
- 'ZX': 2.356741916897942e-08,
- 'ZY': 2.3567419182857208e-08,
- 'ZZ': 0.0009407197401905265}
-            err_dict_values = list(err_dict_trapped_ion_cz_CZ.values())
-            for control, target in tupled_targets:
-                error_char = random.choices(['II', 'IX', 'IY', 'IZ', 'XI', 'XX', 'XY','XZ',
-                                             'YI', 'YX', 'YY', 'YZ', 'ZI', 'ZX', 'ZY', 'ZZ'],
-                                            weights=err_dict_values, k=1)[0]
-                error_char_list = list(error_char)
-                error[control] = error_char_list[0]
-                error[target] = error_char_list[1]
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'H':
-            # error probabilities for trapped ion Hadamard gate
-            err_dict_trapped_ion_cz_H ={'II': 0.9970831318064503,
- 'XI': 0.0004876108844646676,
- 'YI': 0.0009721305333010022,
- 'ZI': 0.0014571267757840511}
-            err_dict_values = list(err_dict_trapped_ion_cz_H.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
-                error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'S' or gate_name == 'S_DAG':
-            err_dict_trapped_ion_cz_S = {'II': 0.9970240579376571,
- 'IX': 1.4922560645502791e-07,
- 'IY': 1.4922560645502791e-07,
- 'IZ': 0.00297564361112998}
-            err_dict_values = list(err_dict_trapped_ion_cz_S.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
-                error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        else:
-            raise ValueError(f"Unsupported gate {gate_name} for trapped ion_cz platform.")
-        
-
-    elif qubit_platform == 'neutral_atom':
-        if gate_name == 'CZ':
-                            # error probabilities for neutral atom CZ gate
-            err_dict_neutral_atom_CZ = {'II': 0.997068734751876,
- 'IX': 2.0905858801045785e-08,
- 'IY': 2.090585879410689e-08,
- 'IZ': 0.0009635217661934578,
- 'XI': 2.0489466380502197e-08,
- 'XX': 2.04892314434324e-08,
- 'XY': 2.0489231478126868e-08,
- 'XZ': 2.0489466380502197e-08,
- 'YI': 2.0489466380502197e-08,
- 'YX': 2.0489231471187974e-08,
- 'YY': 2.0489231450371292e-08,
- 'YZ': 2.048946638744109e-08,
- 'ZI': 0.0008600034582691082,
- 'ZX': 2.0905858801045785e-08,
- 'ZY': 2.090585879410689e-08,
- 'ZZ': 0.0009735718210506714}
-            err_dict_values = list(err_dict_neutral_atom_CZ.values())
-            for control, target in tupled_targets:
-                error_char = random.choices(['II', 'IX', 'IY', 'IZ', 'XI', 'XX', 'XY','XZ',
-                                             'YI', 'YX', 'YY', 'YZ', 'ZI', 'ZX', 'ZY', 'ZZ'],
-                                            weights=err_dict_values, k=1)[0]
-                error_char_list = list(error_char)
-                error[control] = error_char_list[0]
-                error[target] = error_char_list[1]
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'H':
-            # error probabilities for neutral atom Hadamard gate
-            err_dict_neutral_atom_H = {'II': 0.9970831318064503,
- 'XI': 0.0004876108844646676,
- 'YI': 0.0009721305333010022,
- 'ZI': 0.0014571267757840511}
-            err_dict_values = list(err_dict_neutral_atom_H.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
-                error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'S' or gate_name == 'S_DAG':
-            err_dict_neutral_atom_S = {'II': 0.9970240579376571,
- 'IX': 1.4922560645502791e-07,
- 'IY': 1.4922560645502791e-07,
- 'IZ': 0.00297564361112998}
-            err_dict_values = list(err_dict_neutral_atom_S.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
-                error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        else:
-            raise ValueError(f"Unsupported gate {gate_name} for neutral atom platform.")
-    elif qubit_platform == 'ideal':
-        # No error for ideal platform
-        pass
-    else:
+    platform_channels = _GATE_ERROR_CHANNELS.get(qubit_platform)
+    if platform_channels is None:
         raise ValueError(f"Unsupported qubit platform: {qubit_platform}")
 
-    # Placeholder for actual error channel logic
-    # This function can be expanded based on specific error models for each gate
-    return pauli 
+    channel = platform_channels.get(gate_name)
+    if channel is None:
+        message = _UNSUPPORTED_GATE_ERROR_MESSAGES.get(qubit_platform)
+        if message is None:
+            raise ValueError(f"Unsupported qubit platform: {qubit_platform}")
+        raise ValueError(message.format(gate_name=gate_name))
+
+    choices, weights, arity = channel
+    error = list(identity)
+    has_non_identity_error = False
+
+    if arity == 2:
+        for control, target in pairwise_tuples(targets):
+            error_char = random.choices(choices, weights=weights, k=1)[0]
+            error[control] = error_char[0]
+            error[target] = error_char[1]
+            if error_char != "II":
+                has_non_identity_error = True
+    else:
+        for target in targets:
+            error_char = random.choices(choices, weights=weights, k=1)[0]
+            error[target] = error_char
+            if error_char != "I":
+                has_non_identity_error = True
+
+    if not has_non_identity_error:
+        return pauli
+
+    pauli *= PauliString(''.join(error))
+    return pauli
+
+
+def apply_gate_and_idle_error(
+        pauli: PauliString,
+        gate_name: str,
+        gate_targets: List[int],
+        idle_qubits: List[int],
+        identity: str,
+        qubit_platform: str,
+        idle_weights: List[float],
+) -> PauliString:
+    """
+    Applies both gate-channel and idle-qubit errors in one Pauli multiplication.
+
+    This reduces intermediate string/object allocations in the innermost loop.
+    """
+    if qubit_platform == 'ideal':
+        return pauli
+
+    platform_channels = _GATE_ERROR_CHANNELS.get(qubit_platform)
+    if platform_channels is None:
+        raise ValueError(f"Unsupported qubit platform: {qubit_platform}")
+
+    channel = platform_channels.get(gate_name)
+    if channel is None:
+        message = _UNSUPPORTED_GATE_ERROR_MESSAGES.get(qubit_platform)
+        if message is None:
+            raise ValueError(f"Unsupported qubit platform: {qubit_platform}")
+        raise ValueError(message.format(gate_name=gate_name))
+
+    choices, weights, arity = channel
+    error = list(identity)
+    has_non_identity_error = False
+
+    if arity == 2:
+        for control, target in pairwise_tuples(gate_targets):
+            error_char = random.choices(choices, weights=weights, k=1)[0]
+            error[control] = error_char[0]
+            error[target] = error_char[1]
+            if error_char != "II":
+                has_non_identity_error = True
+    else:
+        for target in gate_targets:
+            error_char = random.choices(choices, weights=weights, k=1)[0]
+            error[target] = error_char
+            if error_char != "I":
+                has_non_identity_error = True
+
+    for qubit in idle_qubits:
+        error_char = random.choices(_PAULI_ERROR_CHOICES, weights=idle_weights, k=1)[0]
+        error[qubit] = error_char
+        if error_char != 'I':
+            has_non_identity_error = True
+
+    if not has_non_identity_error:
+        return pauli
+
+    pauli *= PauliString(''.join(error))
+    return pauli
 
 #----------------- GATE FUNCTIONS -----------------#
 
@@ -535,6 +527,11 @@ def get_pauli_string(
     initial_state = identity if initial_pauli_string is None else initial_pauli_string
     effective_gate_sequence = compressed_gate_sequence
     effective_keep_qubits = compressed_keep_qubits
+    gate_steps: List[Tuple[str, List[int], List[int]]] = []
+    for gate_name, gate_targets in effective_gate_sequence:
+        gate_target_set = set(gate_targets)
+        idle_qubits = [q for q in effective_keep_qubits if q not in gate_target_set]
+        gate_steps.append((gate_name, gate_targets, idle_qubits))
     # For manipulations with only ancillas
     #effective_ancilla = compressed_ancilla
     # Interval [0,1]. X ->[0,px) Y -> [px,px+py) Z -> [px+py,p) I -> [p, 1 - p] p =px + py + pz
@@ -555,13 +552,19 @@ def get_pauli_string(
             # INIT error
             pauli = apply_error(pauli, identity, effective_keep_qubits, weights_init_meas) # init error |+> -> |->
             # Circuit
-            for gate in effective_gate_sequence:
+            for gate_name, gate_targets, idle_qubits in gate_steps:
                 # Gate operation under conjugation
-                pauli = gate_operation(pauli, gate[0], gate[1], TABLEAUS=TABLEAU_CACHE)
-                # GATE's error channel
-                pauli = apply_gate_error_channel(pauli, gate[0], gate[1], identity, qubit_platform=qubit_platform)
-                # ERROR IDLE Qubits during gate
-                pauli = apply_error(pauli, identity, [j for j in effective_keep_qubits if j not in gate[1]], weights)
+                pauli = gate_operation(pauli, gate_name, gate_targets, TABLEAUS=TABLEAU_CACHE)
+                # Apply gate channel and idle errors together to reduce object churn.
+                pauli = apply_gate_and_idle_error(
+                    pauli,
+                    gate_name,
+                    gate_targets,
+                    idle_qubits,
+                    identity,
+                    qubit_platform,
+                    weights,
+                )
 
             # ERROR BEFORE MEASUREMENT
             pauli = apply_error(pauli, identity, effective_keep_qubits, weights_init_meas)
@@ -573,8 +576,8 @@ def get_pauli_string(
             pauli = PauliString(initial_state)
             # INIT error
             pauli = apply_error(pauli, identity, effective_keep_qubits, weights_init_meas)
-            for gate in effective_gate_sequence:
-                pauli = gate_operation(pauli, gate[0], gate[1], TABLEAUS=TABLEAU_CACHE)
+            for gate_name, gate_targets, _idle_qubits in gate_steps:
+                pauli = gate_operation(pauli, gate_name, gate_targets, TABLEAUS=TABLEAU_CACHE)
                 pauli = apply_error(pauli, identity, effective_keep_qubits, weights)
             # ERROR BEFORE MEASUREMENT
             pauli = apply_error(pauli, identity, effective_keep_qubits, weights_init_meas)

@@ -25,6 +25,8 @@ from pauli_distribution import (  # noqa: E402
 	apply_gate_error_channel,
 )
 
+TEST_DATA_DIR = Path(__file__).resolve().parent
+
 
 def test_get_pauli_string_length_and_value_range() -> None:
 	samples = get_pauli_string(
@@ -100,7 +102,7 @@ def test_get_pauli_string_uses_custom_initial_pauli_string() -> None:
 
 # Error at the end of circuit Tests
 # Load XXZX 4-qubit circuit Initial Pauli strings and Error propagations
-with open("xzzx_export.json", "r") as f:
+with (TEST_DATA_DIR / "xzzx_export.json").open("r", encoding="utf-8") as f:
     data = json.load(f)
 
 init_Pauli_strings = data["seq_strings"]
@@ -208,7 +210,7 @@ def test_4_qubit_XZZX_circuit_random_seed_consistency_2() -> None:
 
 	assert samples1 != samples2
 # Load XYHS 4-qubit circuit Initial Pauli strings and Error propagations
-with open("xyhs_export.json", "r") as f:
+with (TEST_DATA_DIR / "xyhs_export.json").open("r", encoding="utf-8") as f:
     data_xyhs = json.load(f)
 
 init_Pauli_strings_xyhs = data_xyhs["seq_strings"]
@@ -434,6 +436,50 @@ def test_s_gate_error_channel() -> None:
 					'Y': 1.4922560645502791e-07,
 					'Z': 0.00297564361112998}
 	assert all(abs(effective_probs[pauli] - err_dict_s[pauli]) < 0.01 for pauli in err_dict_s)
+
+
+def test_apply_gate_error_channel_seed_reproducibility() -> None:
+	identity = "__"
+
+	def sample_with_seed(seed: int, draws: int = 200) -> List[List[int]]:
+		random.seed(seed)
+		out: List[List[int]] = []
+		for _ in range(draws):
+			pauli = PauliString(identity)
+			pauli = apply_gate_error_channel(pauli, "CX", [0, 1], identity, "superconducting")
+			out.append(list(pauli))
+		return out
+
+	seq_a = sample_with_seed(12345)
+	seq_b = sample_with_seed(12345)
+
+	assert seq_a == seq_b
+	assert len(seq_a) == 200
+
+
+def test_apply_gate_error_channel_unsupported_gate_message() -> None:
+	with pytest.raises(ValueError, match="Unsupported gate CX for neutral atom platform"):
+		apply_gate_error_channel(PauliString("__"), "CX", [0, 1], "__", "neutral_atom")
+
+
+def test_get_pauli_string_full_path_seed_reproducibility_nonideal() -> None:
+	kwargs = {
+		"keep_qubits": [0, 1],
+		"samples": 32,
+		"p": 0.05,
+		"system_bias": 10.0,
+		"gate_sequence": [("H", [0]), ("CX", [0, 1]), ("S", [1])],
+		"ancilla": [],
+		"qubit_platform": "superconducting",
+		"random_seed": 2026,
+	}
+
+	samples_a = get_pauli_string(**kwargs)
+	samples_b = get_pauli_string(**kwargs)
+
+	assert samples_a == samples_b
+	assert len(samples_a) == 64
+	assert all(v in (0, 1, 2, 3) for v in samples_a)
 
 
 
