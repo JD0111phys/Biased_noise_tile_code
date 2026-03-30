@@ -131,7 +131,7 @@ for _, qubits in gate_tile_linear:
     used_qubits_linear.extend(qubits)
 keep_qubits_linear = list(sorted(set(used_qubits_linear)))
 
-chosen_seed = 1100000
+chosen_seed = 1000000
 platform = "ideal"
 bias_sys = 10000.0
 prob = 0.003

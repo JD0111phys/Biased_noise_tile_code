@@ -116,7 +116,7 @@ used_qubits_XY: List[int] = []
 for _, qubits in gate_tile_XY:
     used_qubits_XY.extend(qubits)
 keep_qubits_XY = list(sorted(set(used_qubits_XY)))
-chosen_seed = 1700000
+chosen_seed = 2200000
 
 converted_gate_sequence = convert_gate_sequence(gate_tile_XY, "CNOT_native")
 platform = "ideal"

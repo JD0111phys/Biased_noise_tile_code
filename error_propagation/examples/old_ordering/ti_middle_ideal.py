@@ -137,7 +137,7 @@ used_qubits_middle: List[int] = []
 for _, qubits in gate_tile_middle:
     used_qubits_middle.extend(qubits)
 keep_qubits_middle = list(sorted(set(used_qubits_middle)))
-chosen_seed = 2100000
+chosen_seed = 1700000
 platform = "ideal"
 bias_sys = 10000.0
 prob = 0.003

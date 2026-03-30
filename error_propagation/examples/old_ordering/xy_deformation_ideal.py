@@ -115,7 +115,7 @@ used_qubits_XY: List[int] = []
 for _, qubits in gate_tile_XY:
     used_qubits_XY.extend(qubits)
 keep_qubits_XY = list(sorted(set(used_qubits_XY)))
-chosen_seed = 1600000
+chosen_seed = 2400000
 platform = "ideal"
 bias_sys = 10000.0
 prob = 0.003

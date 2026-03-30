@@ -41,13 +41,12 @@ used_qubits_css: List[int] = []
 for _, qubits in gate_tile_css:
     used_qubits_css.extend(qubits)
 keep_qubits_css = list(sorted(set(used_qubits_css)))
-chosen_seed = 600000
-
+chosen_seed = 100001
 platform = "ideal"
 bias_sys = 10000.0
 prob = 0.003
-samples_per_iteration = 10000  # Increased for better convergence
-total_samples = 2_000_000  # Set a maximum total sample limit for safety
+samples_per_iteration = 100000
+total_samples = 200_000_000
 converted_gate_sequence = convert_gate_sequence(gate_tile_css, "CNOT_native")
 
 # Create new directory for all output files

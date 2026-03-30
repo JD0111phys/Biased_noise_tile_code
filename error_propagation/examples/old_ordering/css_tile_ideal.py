@@ -112,7 +112,7 @@ used_qubits_css: List[int] = []
 for _, qubits in gate_tile_css:
     used_qubits_css.extend(qubits)
 keep_qubits_css = list(sorted(set(used_qubits_css)))
-chosen_seed = 600000
+chosen_seed = 300000
 
 platform = "ideal"
 bias_sys = 10000.0

@@ -116,7 +116,7 @@ used_qubits_css: List[int] = []
 for _, qubits in gate_tile_css:
     used_qubits_css.extend(qubits)
 keep_qubits_css = list(sorted(set(used_qubits_css)))
-chosen_seed = 800000
+chosen_seed = 500000
 converted_gate_sequence = convert_gate_sequence(gate_tile_css, "CNOT_native")
 platform = "superconducting"
 bias_sys = 10000.0

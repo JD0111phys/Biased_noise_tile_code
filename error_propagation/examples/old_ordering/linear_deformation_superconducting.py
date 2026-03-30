@@ -131,7 +131,7 @@ for _, qubits in gate_tile_linear:
     used_qubits_linear.extend(qubits)
 keep_qubits_linear = list(sorted(set(used_qubits_linear)))
 
-chosen_seed = 1300000
+chosen_seed = 1200000
 converted_gate_sequence = convert_gate_sequence(gate_tile_linear, "CNOT_native")
 platform = "superconducting"
 bias_sys = 10000.0

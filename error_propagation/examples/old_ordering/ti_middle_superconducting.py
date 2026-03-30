@@ -138,7 +138,7 @@ for _, qubits in gate_tile_middle:
     used_qubits_middle.extend(qubits)
 keep_qubits_middle = list(sorted(set(used_qubits_middle)))
 
-chosen_seed = 2300000
+chosen_seed = 1900000
 
 converted_gate_sequence = convert_gate_sequence(gate_tile_middle, "CNOT_native")
 platform = "superconducting"

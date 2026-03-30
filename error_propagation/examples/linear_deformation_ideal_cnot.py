@@ -45,13 +45,13 @@ used_qubits_linear: List[int] = []
 for _, qubits in gate_tile_linear:
     used_qubits_linear.extend(qubits)
 keep_qubits_linear = list(sorted(set(used_qubits_linear)))
-chosen_seed = 1200000
+chosen_seed = 800001
 converted_gate_sequence = convert_gate_sequence(gate_tile_linear, "CNOT_native")
 platform = "ideal"
 bias_sys = 10000.0
 prob = 0.003
-samples_per_iteration = 10000  # Increased for better convergence
-total_samples = 2_000_000  # Set a maximum total sample limit for safety
+samples_per_iteration = 100000
+total_samples = 200_000_000
 
 
 # Create new directory for all output files

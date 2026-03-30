@@ -655,7 +655,9 @@ def get_pauli_string(
     # Precompute gate's Tableau
     TABLEAU_CACHE = {name: Tableau.from_named_gate(name) for name, _ in effective_gate_sequence}
     flattened_result: List[int] = []
-    running_counts = {0: 0, 1: 0, 2: 0, 3: 0}
+    x_count = 0
+    y_count = 0
+    z_count = 0
     if qubit_platform != 'ideal':
         for _ in range(samples):
 
@@ -680,7 +682,13 @@ def get_pauli_string(
 
             if return_counts:
                 for value in pauli:
-                    running_counts[int(value)] += 1
+                    pauli_value = int(value)
+                    if pauli_value == 1:
+                        x_count += 1
+                    elif pauli_value == 2:
+                        y_count += 1
+                    elif pauli_value == 3:
+                        z_count += 1
             else:
                 flattened_result.extend(list(pauli)) # type: ignore
     else:
@@ -698,12 +706,20 @@ def get_pauli_string(
 
             if return_counts:
                 for value in pauli:
-                    running_counts[int(value)] += 1
+                    pauli_value = int(value)
+                    if pauli_value == 1:
+                        x_count += 1
+                    elif pauli_value == 2:
+                        y_count += 1
+                    elif pauli_value == 3:
+                        z_count += 1
             else:
                 flattened_result.extend(list(pauli)) # type: ignore
 
     if return_counts:
-        return running_counts
+        total_observations = samples * compressed_size
+        identity_count = total_observations - (x_count + y_count + z_count)
+        return {0: identity_count, 1: x_count, 2: y_count, 3: z_count}
     return flattened_result
 
 #----------------- STORING DATA FUNCTIONS -----------------#
@@ -774,6 +790,82 @@ def load_running_counts(input_file: str) -> Dict[int, int]:
         pass  # Return initialized counts if file doesn't exist
     return running_counts
 
+
+def _last_numeric_iteration(progress_file: str) -> int:
+    """Return the last numeric iteration index found in a progress file."""
+    last_iteration = 0
+    try:
+        with open(progress_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped or stripped.startswith('#'):
+                    continue
+                first_field = stripped.split(',', 1)[0]
+                try:
+                    last_iteration = int(first_field)
+                except ValueError:
+                    continue
+    except FileNotFoundError:
+        return 0
+    return last_iteration
+
+
+def _first_seed_from_counts_file(input_file: str) -> Optional[int]:
+    """Return the first valid seed value stored in a counts JSONL file, if any."""
+    try:
+        with open(input_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    data = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                data_dict = cast(Dict[Any, Any], data)
+                if 'seed' not in data_dict:
+                    continue
+                seed_value = data_dict.get('seed')
+                if seed_value is None:
+                    continue
+                try:
+                    return int(seed_value)
+                except (TypeError, ValueError):
+                    continue
+    except FileNotFoundError:
+        return None
+    return None
+
+
+def _resolve_convergence_metric(
+    convergence_mode: str,
+    convergence_x: float,
+    convergence_y: float,
+    convergence_z: float,
+    convergence_bias: float,
+) -> float:
+    """Resolve scalar convergence from configured mode."""
+    normalized_mode = convergence_mode.strip().lower()
+    if normalized_mode == "max_xyz":
+        return max(convergence_x, convergence_y, convergence_z)
+    if normalized_mode == "bias":
+        return convergence_bias
+    if normalized_mode == "combined":
+        combined = convergence_x
+        if convergence_y > combined:
+            combined = convergence_y
+        if convergence_z > combined:
+            combined = convergence_z
+        if convergence_bias > combined:
+            combined = convergence_bias
+        return combined
+    raise ValueError(
+        "convergence_mode must be one of: 'max_xyz', 'bias', 'combined'. "
+        f"Got: {convergence_mode}"
+    )
+
 #----------------- MAIN SIMULATION FUNCTION WITH CONVERGENCE CHECK -----------------#
 
 def error_propagation_simulation(
@@ -784,6 +876,11 @@ def error_propagation_simulation(
     timestamp: str,
     save_every: int = 1,
     coalesce_disjoint_timesteps: bool = True,
+    resume_counts_file: Optional[str] = None,
+    resume_progress_file: Optional[str] = None,
+    convergence_mode: str = "bias",
+    convergence_threshold: float = 1e-07,
+    required_consecutive_iterations: int = 30,
     ) -> Tuple[str,str]: 
     """
     Run iterative Pauli-error propagation simulation until convergence or sample cap.
@@ -803,13 +900,28 @@ def error_propagation_simulation(
         total_samples: Maximum total sample budget used to compute max iterations.
         chosen_seed: Optional initial random seed used to initialize sampling.
             Subsequent iterations continue from the ongoing RNG state and are
-            not reseeded.
+            not reseeded. When resuming from prior counts, this seed is used to
+            initialize the resumed sampling stream.
         timestamp: Suffix used in output filenames.
         save_every: Number of iterations to buffer before appending progress
             and counts to disk. Use 1 to preserve per-iteration writes.
         coalesce_disjoint_timesteps: If True, groups consecutive disjoint gates
             into one logical timestep when sampling, applying idle noise once
             per layer.
+        resume_counts_file: Optional path to an existing running-counts JSONL
+            file. If provided, counts are loaded and simulation continues from
+            those accumulated statistics instead of starting from zero.
+        resume_progress_file: Optional path to an existing effective-probabilities
+            progress file. If provided, new rows are appended and iteration
+            numbering continues from the last numeric iteration in this file.
+        convergence_mode: Scalar convergence metric selection:
+            - "max_xyz": max of X/Y/Z probability deltas
+            - "bias": absolute delta of bias only
+            - "combined": max(max_xyz, bias_delta)
+        convergence_threshold: Iteration is counted as converged when selected
+            scalar convergence metric is below this threshold.
+        required_consecutive_iterations: Number of consecutive converged
+            iterations required before stopping.
 
     Returns:
         Tuple of (progress_file, counts_file) output paths.
@@ -827,24 +939,77 @@ def error_propagation_simulation(
         raise ValueError("total_samples must be >= 0.")
     if save_every <= 0:
         raise ValueError("save_every must be > 0.")
+    if convergence_threshold <= 0.0:
+        raise ValueError("convergence_threshold must be > 0.")
+    if required_consecutive_iterations <= 0:
+        raise ValueError("required_consecutive_iterations must be > 0.")
 
-    initial_samples = min(samples_per_iteration, total_samples)
-    initial_counts_raw = get_pauli_string(
-        samples=initial_samples,
-        keep_qubits=keep_qubits,
-        p=p_param,
-        system_bias=system_bias,
-        qubit_platform=qubit_platform,
-        gate_sequence=gate_sequence,
-        ancilla=ancilla,
-        random_seed=chosen_seed,
-        return_counts=True,
-        coalesce_disjoint_timesteps=coalesce_disjoint_timesteps,
-    )
-    initial_counts = cast(Dict[int, int], initial_counts_raw)
+    normalized_convergence_mode = convergence_mode.strip().lower()
+    if normalized_convergence_mode not in {"max_xyz", "bias", "combined"}:
+        raise ValueError(
+            "convergence_mode must be one of: 'max_xyz', 'bias', 'combined'. "
+            f"Got: {convergence_mode}"
+        )
 
-    # Initialize running counts for efficient probability calculation
-    running_counts = {0: initial_counts.get(0, 0), 1: initial_counts.get(1, 0), 2: initial_counts.get(2, 0), 3: initial_counts.get(3, 0)}
+    output_qubit_count = len(sorted(set(keep_qubits) | set(ancilla)))
+    if output_qubit_count <= 0:
+        raise ValueError("At least one output qubit is required to run simulation.")
+
+    is_resuming = (resume_counts_file is not None) or (resume_progress_file is not None)
+
+    # Initialize running counts for efficient probability calculation.
+    if resume_counts_file is not None:
+        try:
+            with open(resume_counts_file, 'r', encoding='utf-8'):
+                pass
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(f"Resume counts file not found: {resume_counts_file}") from exc
+
+        # Avoid reusing the exact initial seed from the loaded run.
+        prior_seed = _first_seed_from_counts_file(resume_counts_file)
+        if prior_seed is not None and chosen_seed == prior_seed:
+            chosen_seed += 1
+
+        # Seed resumed sampling stream so continuation batches are reproducible.
+        random.seed(chosen_seed)
+
+        loaded_counts = load_running_counts(resume_counts_file)
+        running_counts = {
+            0: loaded_counts.get(0, 0),
+            1: loaded_counts.get(1, 0),
+            2: loaded_counts.get(2, 0),
+            3: loaded_counts.get(3, 0),
+        }
+        loaded_total = running_counts[0] + running_counts[1] + running_counts[2] + running_counts[3]
+        if loaded_total > 0 and loaded_total % output_qubit_count != 0:
+            raise ValueError(
+                "Loaded counts are incompatible with current output qubit count. "
+                f"total_count={loaded_total}, output_qubit_count={output_qubit_count}."
+            )
+        generated_samples = loaded_total // output_qubit_count
+    else:
+        initial_samples = min(samples_per_iteration, total_samples)
+        initial_counts_raw = get_pauli_string(
+            samples=initial_samples,
+            keep_qubits=keep_qubits,
+            p=p_param,
+            system_bias=system_bias,
+            qubit_platform=qubit_platform,
+            gate_sequence=gate_sequence,
+            ancilla=ancilla,
+            random_seed=chosen_seed,
+            return_counts=True,
+            coalesce_disjoint_timesteps=coalesce_disjoint_timesteps,
+        )
+        initial_counts = cast(Dict[int, int], initial_counts_raw)
+        running_counts = {
+            0: initial_counts.get(0, 0),
+            1: initial_counts.get(1, 0),
+            2: initial_counts.get(2, 0),
+            3: initial_counts.get(3, 0),
+        }
+        generated_samples = initial_samples
+
     # Compute scalar probabilities directly to avoid per-iteration dict allocation.
     total = running_counts[0] + running_counts[1] + running_counts[2] + running_counts[3]
     if total > 0:
@@ -857,26 +1022,40 @@ def error_propagation_simulation(
 
     denominator = x_prob + y_prob
     bias = z_prob / denominator if denominator != 0 else float('inf')
+    previous_bias = bias
 
-    # Save initial running counts
-    counts_file = f"running_counts_{qubit_platform}_{timestamp}.jsonl"
-    save_running_counts(running_counts, counts_file, append=False, seed=chosen_seed)
+    counts_file = resume_counts_file if resume_counts_file is not None else f"running_counts_{qubit_platform}_{timestamp}.jsonl"
+    progress_file = resume_progress_file if resume_progress_file is not None else f"effective_probs_{qubit_platform}_{timestamp}.txt"
 
-    # Initialize progress file with header and initial results
-    progress_file = f"effective_probs_{qubit_platform}_{timestamp}.txt"
-    with open(progress_file, "w") as f:
-        f.write("# Iteration,I_Probability,X_Probability,Y_Probability,Z_Probability,BIAS,I_Convergence,X_Convergence,Y_Convergence,Z_Convergence,Max_Convergence,Consecutive_Convergence_Count\n")
-        f.write(f"0,{i_prob:.8f},{x_prob:.8f},{y_prob:.8f},{z_prob:.8f},{bias},Initial,Initial,Initial,Initial,Initial,0\n")
+    if not is_resuming:
+        save_running_counts(running_counts, counts_file, append=False, seed=chosen_seed)
+        with open(progress_file, "w", encoding="utf-8") as f:
+            f.write("# Iteration,I_Probability,X_Probability,Y_Probability,Z_Probability,BIAS,I_Convergence,X_Convergence,Y_Convergence,Z_Convergence,Max_Convergence,Consecutive_Convergence_Count,Generated_Samples\n")
+            f.write(f"0,{i_prob:.8f},{x_prob:.8f},{y_prob:.8f},{z_prob:.8f},{bias},Initial,Initial,Initial,Initial,Initial,0,{generated_samples}\n")
+    else:
+        if resume_progress_file is None:
+            with open(progress_file, "w", encoding="utf-8") as f:
+                f.write("# Iteration,I_Probability,X_Probability,Y_Probability,Z_Probability,BIAS,I_Convergence,X_Convergence,Y_Convergence,Z_Convergence,Max_Convergence,Consecutive_Convergence_Count,Generated_Samples\n")
+                f.write(f"0,{i_prob:.8f},{x_prob:.8f},{y_prob:.8f},{z_prob:.8f},{bias},Resumed,Resumed,Resumed,Resumed,Resumed,0,{generated_samples}\n")
+        else:
+            with open(progress_file, "a", encoding="utf-8") as f:
+                f.write(
+                    f"# Resuming from prior data at samples={generated_samples}, "
+                    f"I={i_prob:.8f}, X={x_prob:.8f}, Y={y_prob:.8f}, Z={z_prob:.8f}, BIAS={bias}\n"
+                )
+        with open(progress_file, "a", encoding="utf-8") as f:
+            f.write(
+                f"# Convergence config: mode={convergence_mode}, "
+                f"threshold={convergence_threshold:.2e}, "
+                f"required_consecutive_iterations={required_consecutive_iterations}\n"
+            )
 
     convergence = 100.0
-    iteration = 0
-    generated_samples = initial_samples
-    consecutive_convergence_count = 0  # Track consecutive iterations with convergence < 1e-07
-    required_consecutive_iterations = 30  # Number of consecutive iterations required
+    iteration = _last_numeric_iteration(progress_file) if is_resuming else 0
+    consecutive_convergence_count = 0
     pending_counts_rows: List[Dict[str, Any]] = []
     pending_progress_lines: List[str] = []
 
-    # convergence threshold is set to 1e-07 to ensure we are well below the 1e-05 target for bias convergence, accounting for fluctuations in X and Y probabilities
     while consecutive_convergence_count < required_consecutive_iterations and generated_samples < total_samples:
         iteration += 1
         current_batch_samples = min(samples_per_iteration, total_samples - generated_samples)
@@ -914,27 +1093,44 @@ def error_propagation_simulation(
             'seed': None,
         })
         
-        # Calculate absolute difference for convergence of all Pauli operators
-        convergence_I = abs(i_prob - new_i_prob)
-        convergence_X = abs(x_prob - new_x_prob)
-        convergence_Y = abs(y_prob - new_y_prob)
-        convergence_Z = abs(z_prob - new_z_prob)
+        # Calculate only the convergence components needed by selected mode.
+        convergence_I = float('nan')
+        convergence_X = float('nan')
+        convergence_Y = float('nan')
+        convergence_Z = float('nan')
+        convergence_bias = float('nan')
+
+        if normalized_convergence_mode in {"max_xyz", "combined"}:
+            convergence_I = abs(i_prob - new_i_prob)
+            convergence_X = abs(x_prob - new_x_prob)
+            convergence_Y = abs(y_prob - new_y_prob)
+            convergence_Z = abs(z_prob - new_z_prob)
         
         denominator = new_x_prob + new_y_prob
         bias = new_z_prob / denominator if denominator != 0 else float('inf')
+        if normalized_convergence_mode in {"bias", "combined"}:
+            if previous_bias == float('inf') and bias == float('inf'):
+                convergence_bias = 0.0
+            else:
+                convergence_bias = abs(previous_bias - bias)
         
-        # Use maximum convergence across error operators only (I is redundant due to normalization)
-        convergence = max(convergence_X, convergence_Y, convergence_Z)
+        convergence = _resolve_convergence_metric(
+            normalized_convergence_mode,
+            convergence_X,
+            convergence_Y,
+            convergence_Z,
+            convergence_bias,
+        )
         
         # Check convergence criteria and update consecutive count
-        if convergence < 1e-07:
+        if convergence < convergence_threshold:
             consecutive_convergence_count += 1
         else:
             consecutive_convergence_count = 0  # Reset counter if convergence is not met
         
         # Save progress to same file (append)
         pending_progress_lines.append(
-            f"{iteration},{new_i_prob:.8f},{new_x_prob:.8f},{new_y_prob:.8f},{new_z_prob:.8f},{bias},{convergence_I:.2e},{convergence_X:.2e},{convergence_Y:.2e},{convergence_Z:.2e},{convergence:.2e},{consecutive_convergence_count}\n"
+            f"{iteration},{new_i_prob:.8f},{new_x_prob:.8f},{new_y_prob:.8f},{new_z_prob:.8f},{bias},{convergence_I:.2e},{convergence_X:.2e},{convergence_Y:.2e},{convergence_Z:.2e},{convergence:.2e},{consecutive_convergence_count},{generated_samples}\n"
         )
 
         if iteration % save_every == 0:
@@ -952,6 +1148,8 @@ def error_propagation_simulation(
         x_prob = new_x_prob
         y_prob = new_y_prob
         z_prob = new_z_prob
+        previous_bias = bias
+############################## end of while loop ##############################
 
     # Flush remaining buffered rows/lines.
     if pending_counts_rows:
@@ -972,11 +1170,16 @@ def error_propagation_simulation(
     print(f"Consecutive convergence iterations: {consecutive_convergence_count}/{required_consecutive_iterations}")
 
     # Append final summary to progress file
-    with open(progress_file, "a") as f:
+    with open(progress_file, "a", encoding="utf-8") as f:
         f.write(f"# Final: Convergence {'achieved' if consecutive_convergence_count >= required_consecutive_iterations else 'not achieved'} after {iteration} iterations\n")
         f.write(f"# Final probabilities: I={i_prob:.8f}, X={x_prob:.8f}, Y={y_prob:.8f}, Z={z_prob:.8f}\n")
         f.write(f"# Final convergence value: {convergence:.2e}\n")
         f.write(f"# Final bias: {bias}\n")
+        f.write(
+            f"# Convergence config: mode={convergence_mode}, "
+            f"threshold={convergence_threshold:.2e}, "
+            f"required_consecutive_iterations={required_consecutive_iterations}\n"
+        )
         f.write(f"# Consecutive convergence iterations: {consecutive_convergence_count}/{required_consecutive_iterations}\n")
     
     return progress_file, counts_file
