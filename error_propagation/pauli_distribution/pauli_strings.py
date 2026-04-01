@@ -74,17 +74,60 @@ def _coalesce_disjoint_gate_layers(
 
 
 # Precompute cumulative weights for single-qubit gates (shared across all platforms).
-_H_WEIGHTS: Tuple[float, ...] = (0.9970831318064503, 0.0004876108844646676, 0.0009721305333010022, 0.0014571267757840511)
-_S_WEIGHTS: Tuple[float, ...] = (0.9970240579376571, 1.4922560645502791e-07, 1.4922560645502791e-07, 0.00297564361112998)
+_H_WEIGHTS: Tuple[float, ...] = (
+    0.9970831318064503,
+    0.0004876108844646676,
+    0.0009721305333010022,
+    0.0014571267757840511,
+)
+_S_WEIGHTS: Tuple[float, ...] = (
+    0.9970240579376571,
+    1.4922560645502791e-07,
+    1.4922560645502791e-07,
+    0.00297564361112998,
+)
 _H_CUM_WEIGHTS: Tuple[float, ...] = _cumulative_weights(_H_WEIGHTS)
 _S_CUM_WEIGHTS: Tuple[float, ...] = _cumulative_weights(_S_WEIGHTS)
 
-_SC_CX_WEIGHTS: Tuple[float, ...] = (0.9971089697418947, 2.7934102919680015e-08, 2.3735336432129106e-06, 0.0007172714715934017, 2.7711807848440628e-08, 2.5207188356080046e-07, 0.00023518786621833793, 2.5886150639697902e-08, 2.3732742409909857e-06, 0.00023518786621884447, 2.5207741582294885e-07, 2.5808276786498663e-08, 0.0007125772927424889, 2.5887020388415394e-08, 2.579754807691126e-08, 0.0009853957792419835)
-_TI_CNOT_CX_WEIGHTS: Tuple[float, ...] = (0.9970978744492904, 3.3560719574221576e-07, 0.00028982952089751796, 0.00038654305587448867, 0.0005800408405701243, 3.275762831961293e-07, 9.677438302829744e-05, 2.860259729967063e-07, 0.0002907835269792061, 9.66060922966e-05, 1.386814579007467e-07, 2.580023215695282e-07, 0.0009661361035463306, 1.1755776622990322e-07, 3.137816749348987e-07, 0.00019363479484440366)
-_TI_CZ_CZ_WEIGHTS: Tuple[float, ...] = (0.997064919955593, 2.6383893972359296e-08, 2.6383893986237084e-08, 0.0009970331256010934, 2.6383893972359296e-08, 2.3561940468153075e-08, 2.3561940468153075e-08, 2.3567419182857208e-08, 2.6383893972359296e-08, 2.3561940468153075e-08, 2.3561940468153075e-08, 2.3567419182857208e-08, 0.0009970331256011072, 2.356741916897942e-08, 2.3567419182857208e-08, 0.0009407197401905265)
-_NA_CZ_WEIGHTS: Tuple[float, ...] = (0.997068734751876, 2.0905858801045785e-08, 2.090585879410689e-08, 0.0009635217661934578, 2.0489466380502197e-08, 2.04892314434324e-08, 2.0489231478126868e-08, 2.0489466380502197e-08, 2.0489466380502197e-08, 2.0489231471187974e-08, 2.0489231450371292e-08, 2.048946638744109e-08, 0.0008600034582691082, 2.0905858801045785e-08, 2.090585879410689e-08, 0.0009735718210506714)
+_SC_CX_WEIGHTS: Tuple[float, ...] = (
+    0.9971089697418947, 2.7934102919680015e-08, 2.3735336432129106e-06,
+    0.0007172714715934017, 2.7711807848440628e-08, 2.5207188356080046e-07,
+    0.00023518786621833793, 2.5886150639697902e-08, 2.3732742409909857e-06,
+    0.00023518786621884447, 2.5207741582294885e-07, 2.5808276786498663e-08,
+    0.0007125772927424889, 2.5887020388415394e-08, 2.579754807691126e-08,
+    0.0009853957792419835,
+)
+_TI_CNOT_CX_WEIGHTS: Tuple[float, ...] = (
+    0.9970978744492904, 3.3560719574221576e-07, 0.00028982952089751796,
+    0.00038654305587448867, 0.0005800408405701243, 3.275762831961293e-07,
+    9.677438302829744e-05, 2.860259729967063e-07, 0.0002907835269792061,
+    9.66060922966e-05, 1.386814579007467e-07, 2.580023215695282e-07,
+    0.0009661361035463306, 1.1755776622990322e-07, 3.137816749348987e-07,
+    0.00019363479484440366,
+)
+_TI_CZ_CZ_WEIGHTS: Tuple[float, ...] = (
+    0.997064919955593, 2.6383893972359296e-08, 2.6383893986237084e-08,
+    0.0009970331256010934, 2.6383893972359296e-08, 2.3561940468153075e-08,
+    2.3561940468153075e-08, 2.3567419182857208e-08, 2.6383893972359296e-08,
+    2.3561940468153075e-08, 2.3561940468153075e-08, 2.3567419182857208e-08,
+    0.0009970331256011072, 2.356741916897942e-08, 2.3567419182857208e-08,
+    0.0009407197401905265,
+)
+_NA_CZ_WEIGHTS: Tuple[float, ...] = (
+    0.997068734751876, 2.0905858801045785e-08, 2.090585879410689e-08,
+    0.0009635217661934578, 2.0489466380502197e-08, 2.04892314434324e-08,
+    2.0489231478126868e-08, 2.0489466380502197e-08, 2.0489466380502197e-08,
+    2.0489231471187974e-08, 2.0489231450371292e-08, 2.048946638744109e-08,
+    0.0008600034582691082, 2.0905858801045785e-08, 2.090585879410689e-08,
+    0.0009735718210506714,
+)
 
-_GATE_ERROR_CHANNELS: Dict[str, Dict[str, Tuple[Tuple[str, ...], Tuple[float, ...], Tuple[float, ...], int]]] = {
+# Type alias for cleaner code
+GateErrorChannelType = Dict[str, Tuple[Tuple[str, ...], Tuple[float, ...], Tuple[float, ...], int]]
+# Precomputed layer metadata type: tuple of (targets, two-qubit pairs, choices, weights, arity)
+PrecomputedLayerItemType = Tuple[List[int], Tuple[Tuple[int, int], ...], Tuple[str, ...], Tuple[float, ...], int]
+
+_GATE_ERROR_CHANNELS: Dict[str, GateErrorChannelType] = {
     'superconducting': {
         'CX': (_TWO_QUBIT_ERROR_CHOICES, _SC_CX_WEIGHTS, _cumulative_weights(_SC_CX_WEIGHTS), 2),
         'H': (_SINGLE_QUBIT_ERROR_CHOICES, _H_WEIGHTS, _H_CUM_WEIGHTS, 1),
@@ -123,7 +166,7 @@ def _get_unsupported_gate_error_message(gate_name: str, platform: str) -> str:
     platform_label = platform_names.get(platform, platform)
     return f"Unsupported gate {gate_name} for {platform_label} platform."
 
-def _get_platform_channels(qubit_platform: str) -> Optional[Dict[str, Tuple[Tuple[str, ...], Tuple[float, ...], Tuple[float, ...], int]]]:
+def _get_platform_channels(qubit_platform: str) -> Optional[GateErrorChannelType]:
     """Get gate error channels for a platform, or None if platform is 'ideal'."""
     if qubit_platform == 'ideal':
         return None
@@ -204,7 +247,13 @@ def pairwise_tuples(lst: List[int]) -> List[Tuple[int, int]]:
         raise ValueError("List must contain an even number of elements.")
     return [(lst[i], lst[i+1]) for i in range(0, len(lst), 2)]
 
-def apply_gate_error_channel(pauli: PauliString, gate_name: str, targets: List[int], identity: str, qubit_platform: str) -> PauliString:
+def apply_gate_error_channel(
+    pauli: PauliString,
+    gate_name: str,
+    targets: List[int],
+    identity: str,
+    qubit_platform: str,
+) -> PauliString:
     """
     Applies a hardware-specific gate error channel to a Pauli string.
 
@@ -239,11 +288,13 @@ def apply_gate_error_channel(pauli: PauliString, gate_name: str, targets: List[i
         return pauli
 
     platform_channels = _get_platform_channels(qubit_platform)
-    assert platform_channels is not None  # Type guard: guaranteed non-None after _get_platform_channels() for non-ideal platform
+    # Type guard: guaranteed non-None after _get_platform_channels() for non-ideal
+    assert platform_channels is not None
 
     channel = platform_channels.get(gate_name)
     if channel is None:
-        raise ValueError(_get_unsupported_gate_error_message(gate_name, qubit_platform))
+        msg = _get_unsupported_gate_error_message(gate_name, qubit_platform)
+        raise ValueError(msg)
 
     choices, _weights, cumulative, arity = channel
     error = list(identity)
@@ -271,11 +322,19 @@ def apply_gate_error_channel(pauli: PauliString, gate_name: str, targets: List[i
 
 
 def apply_precomputed_layer_gate_and_idle_error(
-        pauli: PauliString,
-        identity: str,
-        idle_qubits: List[int],
-        idle_weights: List[float],
-        layer_ops: List[Tuple[List[int], Tuple[Tuple[int, int], ...], Tuple[str, ...], Tuple[float, ...], int]],
+    pauli: PauliString,
+    identity: str,
+    idle_qubits: List[int],
+    idle_weights: List[float],
+    layer_ops: List[
+        Tuple[
+            List[int],
+            Tuple[Tuple[int, int], ...],
+            Tuple[str, ...],
+            Tuple[float, ...],
+            int,
+        ]
+    ],
 ) -> PauliString:
     """Apply gate-channel noise for an entire disjoint layer plus one idle-noise round."""
     error = list(identity)
@@ -286,7 +345,13 @@ def apply_precomputed_layer_gate_and_idle_error(
     idle_z_cutoff = idle_y_cutoff + idle_weights[2]
     idle_total = idle_z_cutoff + idle_weights[3]
 
-    for gate_targets, two_qubit_pairs, choices, cumulative_weights, arity in layer_ops:
+    for (
+        gate_targets,
+        two_qubit_pairs,
+        choices,
+        cumulative_weights,
+        arity,
+    ) in layer_ops:
         if arity == 2:
             for control, target in two_qubit_pairs:
                 error_char = _sample_from_cumulative(choices, cumulative_weights)
@@ -485,17 +550,29 @@ def get_pauli_string(
     all_used_qubits = sorted(set(keep_qubits) | set(ancilla))
     compressed_size = len(all_used_qubits)
     # Create mapping: original_qubit_idx -> compressed_idx
-    qubit_to_compressed = {original: compressed for compressed, original in enumerate(all_used_qubits)}
+    qubit_to_compressed = {
+        original: compressed
+        for compressed, original in enumerate(all_used_qubits)
+    }
     
     # Compress gate sequences
     compressed_gate_sequence: List[GateOp] = []
     for gate_name, targets in gate_sequence:
-        compressed_targets = [qubit_to_compressed[t] for t in targets if t in qubit_to_compressed]
-        if compressed_targets:  # Only add if targets exist in compressed space
+        compressed_targets = [
+            qubit_to_compressed[t]
+            for t in targets
+            if t in qubit_to_compressed
+        ]
+        # Only add if targets exist in compressed space
+        if compressed_targets:
             compressed_gate_sequence.append((gate_name, compressed_targets))
     
     # Compress qubit lists
-    compressed_keep_qubits = [qubit_to_compressed[q] for q in keep_qubits if q in qubit_to_compressed]
+    compressed_keep_qubits = [
+        qubit_to_compressed[q]
+        for q in keep_qubits
+        if q in qubit_to_compressed
+    ]
     #compressed_ancilla = [qubit_to_compressed[q] for q in ancilla if q in qubit_to_compressed]
 
     if initial_pauli_string is not None and len(initial_pauli_string) != compressed_size:
@@ -505,22 +582,37 @@ def get_pauli_string(
         )
     
     identity = "_" * compressed_size
-    initial_state = identity if initial_pauli_string is None else initial_pauli_string
+    initial_state = (
+        identity
+        if initial_pauli_string is None
+        else initial_pauli_string
+    )
     effective_gate_sequence = compressed_gate_sequence
     effective_keep_qubits = compressed_keep_qubits
     gate_layers: List[Tuple[List[GateOp], List[int]]] = (
-        _coalesce_disjoint_gate_layers(effective_gate_sequence, effective_keep_qubits)
+        _coalesce_disjoint_gate_layers(
+            effective_gate_sequence,
+            effective_keep_qubits,
+        )
         if coalesce_disjoint_timesteps
         else [
-            ([(gate_name, gate_targets)], [q for q in effective_keep_qubits if q not in set(gate_targets)])
+            (
+                [(gate_name, gate_targets)],
+                [
+                    q
+                    for q in effective_keep_qubits
+                    if q not in set(gate_targets)
+                ],
+            )
             for gate_name, gate_targets in effective_gate_sequence
         ]
     )
-    precomputed_layers: List[List[Tuple[List[int], Tuple[Tuple[int, int], ...], Tuple[str, ...], Tuple[float, ...], int]]] = []
+    # Precompute metadata for each layer
+    precomputed_layers: List[List[PrecomputedLayerItemType]] = []
     platform_channels = _get_platform_channels(qubit_platform)
 
     for layer_ops, _idle_qubits in gate_layers:
-        layer_meta: List[Tuple[List[int], Tuple[Tuple[int, int], ...], Tuple[str, ...], Tuple[float, ...], int]] = []
+        layer_meta: List[PrecomputedLayerItemType] = []
         if platform_channels is not None:
             for gate_name, gate_targets in layer_ops:
                 channel = platform_channels.get(gate_name)
@@ -528,20 +620,37 @@ def get_pauli_string(
                     raise ValueError(_get_unsupported_gate_error_message(gate_name, qubit_platform))
 
                 choices, _gate_weights, gate_cumulative_weights, arity = channel
-                two_qubit_pairs: Tuple[Tuple[int, int], ...] = tuple(pairwise_tuples(gate_targets)) if arity == 2 else ()
-                layer_meta.append((gate_targets, two_qubit_pairs, choices, gate_cumulative_weights, arity))
+                # Two-qubit pair extraction
+                two_qubit_pairs: Tuple[Tuple[int, int], ...] = (
+                    tuple(pairwise_tuples(gate_targets))
+                    if arity == 2
+                    else ()
+                )
+                layer_meta.append(
+                    (
+                        gate_targets,
+                        two_qubit_pairs,
+                        choices,
+                        gate_cumulative_weights,
+                        arity,
+                    )
+                )
         precomputed_layers.append(layer_meta)
-    # For manipulations with only ancillas
-    #effective_ancilla = compressed_ancilla
-    # Interval [0,1]. X ->[0,px) Y -> [px,px+py) Z -> [px+py,p) I -> [p, 1 - p] p =px + py + pz
-    pz = p * (system_bias / (system_bias + 2))  # Adjust pz based on bias 
-    px = p / (2+system_bias)
+    # Error probabilities - split based on bias
+    # Interval [0,1]: X->[0,px), Y->[px,px+py), Z->[px+py,p), I->[p,1-p]
+    # where p = px + py + pz
+    pz = p * (system_bias / (system_bias + 2))
+    px = p / (2 + system_bias)
     py = px
     p = px + py + pz
     weights = [px, py, pz, 1 - p]
-    weights_init_meas: List[float] = [0, 0, py + pz, 1 - (py + pz)] #  (X basis prep and meas)
-    # Precompute gate's Tableau
-    TABLEAU_CACHE = {name: Tableau.from_named_gate(name) for name, _ in effective_gate_sequence}
+    # X basis prep and measurement error: no X, only Y and Z
+    weights_init_meas: List[float] = [0, 0, py + pz, 1 - (py + pz)]
+    # Precompute Clifford gate tableaus
+    TABLEAU_CACHE = {
+        name: Tableau.from_named_gate(name)
+        for name, _ in effective_gate_sequence
+    }
     flattened_result: List[int] = []
     x_count = 0
     y_count = 0
@@ -551,12 +660,25 @@ def get_pauli_string(
 
             # Convert pauli string to stim's PauliString
             pauli = PauliString(initial_state)
-            # INIT error
-            pauli = apply_error(pauli, identity, effective_keep_qubits, weights_init_meas) # init error |+> -> |->
+            # INIT error (X basis prep: |+> input, measure in Z)
+            pauli = apply_error(
+                pauli,
+                identity,
+                effective_keep_qubits,
+                weights_init_meas,
+            )
             # Circuit
-            for (layer_ops, idle_qubits), layer_meta in zip(gate_layers, precomputed_layers):
+            for (layer_ops, idle_qubits), layer_meta in zip(
+                gate_layers,
+                precomputed_layers,
+            ):
                 for gate_name, gate_targets in layer_ops:
-                    pauli = gate_operation(pauli, gate_name, gate_targets, TABLEAUS=TABLEAU_CACHE)
+                    pauli = gate_operation(
+                        pauli,
+                        gate_name,
+                        gate_targets,
+                        TABLEAUS=TABLEAU_CACHE,
+                    )
                 pauli = apply_precomputed_layer_gate_and_idle_error(
                     pauli,
                     identity,
@@ -566,7 +688,12 @@ def get_pauli_string(
                 )
 
             # ERROR BEFORE MEASUREMENT
-            pauli = apply_error(pauli, identity, effective_keep_qubits, weights_init_meas)
+            pauli = apply_error(
+                pauli,
+                identity,
+                effective_keep_qubits,
+                weights_init_meas,
+            )
 
             if return_counts:
                 for value in pauli:
@@ -584,13 +711,33 @@ def get_pauli_string(
         for _ in range(samples):
             pauli = PauliString(initial_state)
             # INIT error
-            pauli = apply_error(pauli, identity, effective_keep_qubits, weights_init_meas)
+            pauli = apply_error(
+                pauli,
+                identity,
+                effective_keep_qubits,
+                weights_init_meas,
+            )
             for layer_ops, _idle_qubits in gate_layers:
                 for gate_name, gate_targets in layer_ops:
-                    pauli = gate_operation(pauli, gate_name, gate_targets, TABLEAUS=TABLEAU_CACHE)
-                pauli = apply_error(pauli, identity, effective_keep_qubits, weights)
+                    pauli = gate_operation(
+                        pauli,
+                        gate_name,
+                        gate_targets,
+                        TABLEAUS=TABLEAU_CACHE,
+                    )
+                pauli = apply_error(
+                    pauli,
+                    identity,
+                    effective_keep_qubits,
+                    weights,
+                )
             # ERROR BEFORE MEASUREMENT
-            pauli = apply_error(pauli, identity, effective_keep_qubits, weights_init_meas)
+            pauli = apply_error(
+                pauli,
+                identity,
+                effective_keep_qubits,
+                weights_init_meas,
+            )
 
             if return_counts:
                 for value in pauli:
@@ -602,17 +749,24 @@ def get_pauli_string(
                     elif pauli_value == 3:
                         z_count += 1
             else:
-                flattened_result.extend(list(pauli)) # type: ignore
+                flattened_result.extend(list(pauli))  # type: ignore
 
     if return_counts:
         total_observations = samples * compressed_size
-        identity_count = total_observations - (x_count + y_count + z_count)
+        identity_count = (
+            total_observations - (x_count + y_count + z_count)
+        )
         return {0: identity_count, 1: x_count, 2: y_count, 3: z_count}
     return flattened_result
 
 #----------------- STORING DATA FUNCTIONS -----------------#
 
-def save_running_counts(running_counts: Dict[int, int], output_file: str, append: bool = False, seed: Optional[int] = None) -> None:
+def save_running_counts(
+    running_counts: Dict[int, int],
+    output_file: str,
+    append: bool = False,
+    seed: Optional[int] = None,
+) -> None:
     """
     Save running counts and seed to a JSONL file.
     
@@ -669,9 +823,12 @@ def load_running_counts(input_file: str) -> Dict[int, int]:
                         continue
                     counts_dict = cast(Dict[Any, Any], counts)
                     for pauli_type in [0, 1, 2, 3]:
-                        running_counts[pauli_type] += int(
-                            counts_dict.get(str(pauli_type), counts_dict.get(pauli_type, 0))
+                        # Get count using string or int key
+                        count_val = counts_dict.get(
+                            str(pauli_type),
+                            counts_dict.get(pauli_type, 0),
                         )
+                        running_counts[pauli_type] += int(count_val)
     except FileNotFoundError:
         pass  # Return initialized counts if file doesn't exist
     return running_counts
@@ -710,10 +867,15 @@ def _resolve_convergence_metric(
 #----------------- MAIN SIMULATION FUNCTION WITH CONVERGENCE CHECK -----------------#
 
 def error_propagation_simulation(
-    keep_qubits: List[int], ancilla: List[int],
-    p_param: float, system_bias: float, qubit_platform: str,
+    keep_qubits: List[int],
+    ancilla: List[int],
+    p_param: float,
+    system_bias: float,
+    qubit_platform: str,
     gate_sequence: List[GateOp],
-    samples_per_iteration: int,total_samples: int, chosen_seed: int,
+    samples_per_iteration: int,
+    total_samples: int,
+    chosen_seed: int,
     timestamp: str,
     save_every: int = 1,
     coalesce_disjoint_timesteps: bool = True,
@@ -722,7 +884,7 @@ def error_propagation_simulation(
     convergence_mode: str = "bias",
     convergence_threshold: float = 1e-07,
     required_consecutive_iterations: int = 30,
-    ) -> Tuple[str,str]: 
+) -> Tuple[str, str]: 
     """
     Run iterative Pauli-error propagation simulation until convergence or sample cap.
 
