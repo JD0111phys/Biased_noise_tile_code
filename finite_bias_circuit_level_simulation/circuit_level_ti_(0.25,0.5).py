@@ -201,7 +201,7 @@ def finish_tile_code_circuit(
                 target = p2q[data]
                 if target in hadamard_qubits:
                     cnotz_targets[k].extend([ctrl, target])
-                elif k in [0, 2, 4]:
+                elif k in [1, 3, 5]:
                     cyz_targets[k].extend([ctrl, target])
                 else:
                     czz_targets[k].extend([ctrl, target])
@@ -209,21 +209,45 @@ def finish_tile_code_circuit(
     cycle_actions = stim.Circuit()
     params.append_begin_round_tick(cycle_actions, data_qubits)
 
-    for k in range(6):
+    # First layer: x-stream at k = 0
+    if czx_targets[0]:
+        params.append_unitary_2(cycle_actions, "CZ", czx_targets[0])
+
+    if cnotx_targets[0]:
+        params.append_unitary_2(cycle_actions, "CNOT", cnotx_targets[0])
+
+    cycle_actions.append_operation("TICK", [])
+
+    # Middle layers: x[k] together with z[k-1]
+    for k in range(1, 6):
         if czx_targets[k]:
             params.append_unitary_2(cycle_actions, "CZ", czx_targets[k])
+
         if cnotx_targets[k]:
             params.append_unitary_2(cycle_actions, "CNOT", cnotx_targets[k])
+
+        if cnotz_targets[k - 1]:
+            params.append_unitary_2(cycle_actions, "CNOT", cnotz_targets[k - 1])
+
+        if czz_targets[k - 1]:
+            params.append_unitary_2(cycle_actions, "CZ", czz_targets[k - 1])
+
+        if cyz_targets[k - 1]:
+            params.append_unitary_2(cycle_actions, "CY", cyz_targets[k - 1])
+
         cycle_actions.append_operation("TICK", [])
 
-    for k in range(6):
-        if cnotz_targets[k]:
-            params.append_unitary_2(cycle_actions, "CNOT", cnotz_targets[k])
-        if czz_targets[k]:
-            params.append_unitary_2(cycle_actions, "CZ", czz_targets[k])
-        if cyz_targets[k]:
-            params.append_unitary_2(cycle_actions, "CY", cyz_targets[k])
-        cycle_actions.append_operation("TICK", [])
+    # Final layer: last z-stream at k = 5
+    if cnotz_targets[5]:
+        params.append_unitary_2(cycle_actions, "CNOT", cnotz_targets[5])
+
+    if czz_targets[5]:
+        params.append_unitary_2(cycle_actions, "CZ", czz_targets[5])
+
+    if cyz_targets[5]:
+        params.append_unitary_2(cycle_actions, "CY", cyz_targets[5])
+
+    cycle_actions.append_operation("TICK", [])
 
     params.append_measure(cycle_actions, measurement_qubits, "X")
     cycle_actions.append_operation("TICK", [])
@@ -481,12 +505,16 @@ def generate_tile_code_memory_x_circuit(params: CircuitGenParameters) -> stim.Ci
         1 + 8 + 2j,
     ]
     z_order: List[complex] = [
-        -1 + 2j,
+        
         -1 + 2 + 8j,
-        -1 + 8 + 10j,
-        -1 + 10 + 0j,
-        -1 + 0 + 6j,
+        -1 + 2j,
+        
         -1 + 6 + 0j,
+      
+        -1 + 0 + 6j,
+         -1 + 10 + 0j,
+         -1 + 8 + 10j,
+        
     ]
 
     return finish_tile_code_circuit(
