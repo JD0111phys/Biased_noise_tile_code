@@ -185,7 +185,7 @@ def finish_tile_code_circuit(
             if data in p2q:
                 ctrl = p2q[measure]
                 target = p2q[data]
-                if k in {0, 2, 4}:
+                if k in {1, 3, 5}:
                     cnotz_targets[k].extend([ctrl, target])
                 else:
                     czz_targets[k].extend([ctrl, target])
