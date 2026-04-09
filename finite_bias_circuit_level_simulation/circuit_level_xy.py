@@ -177,15 +177,25 @@ def finish_tile_code_circuit(
     cycle_actions = stim.Circuit()
     params.append_begin_round_tick(cycle_actions, data_qubits)
 
-    for k in range(6):
+        # Step 1: only CNOT at k = 0
+    if cnot_targets[0]:
+        params.append_unitary_2(cycle_actions, "CNOT", cnot_targets[0])
+    cycle_actions.append_operation("TICK", [])
+
+    # Step 2: for k = 1..5, do CNOT[k] and CZ[k-1] in the same tick layer
+    for k in range(1, 6):
         if cnot_targets[k]:
             params.append_unitary_2(cycle_actions, "CNOT", cnot_targets[k])
+
+        if cy_targets[k - 1]:
+            params.append_unitary_2(cycle_actions, "CY", cy_targets[k - 1])
+
         cycle_actions.append_operation("TICK", [])
 
-    for k in range(6):
-        if cy_targets[k]:
-            params.append_unitary_2(cycle_actions, "CY", cy_targets[k])
-        cycle_actions.append_operation("TICK", [])
+    # Step 3: only final CZ at k = 5
+    if cy_targets[5]:
+        params.append_unitary_2(cycle_actions, "CY", cy_targets[5])
+    cycle_actions.append_operation("TICK", [])
 
     params.append_measure(cycle_actions, measurement_qubits, "X")
     cycle_actions.append_operation("TICK", [])
@@ -422,12 +432,16 @@ def generate_tile_code_circuit(
         1 + 8 + 2j,
     ]
     z_order: List[complex] = [
-        -1 + 2j,
+        
         -1 + 2 + 8j,
-        -1 + 8 + 10j,
-        -1 + 10 + 0j,
-        -1 + 0 + 6j,
+        -1 + 2j,
+        
         -1 + 6 + 0j,
+      
+        -1 + 0 + 6j,
+         -1 + 10 + 0j,
+         -1 + 8 + 10j,
+        
     ]
 
     return finish_tile_code_circuit(
