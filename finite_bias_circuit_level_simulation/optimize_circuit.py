@@ -2,11 +2,14 @@ import itertools
 import stim
 import sys
 import copy
+from pathlib import Path
 
 import numpy as np
 
-# We'll import the original module just to get dependencies, but we will redefine the generation logic slightly.
-sys.path.insert(0, '/Users/sayandipdhara/Desktop/Biased_noise_codes/biased_noise_tile_code')
+# Dynamically resolve the repo root (two levels up from this file) so that
+# the import works for any user who clones the repository.
+_repo_root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_repo_root))
 from finite_bias_circuit_level_simulation.circuit_level_css import *
 
 # Override finish_tile_code_circuit to interleave the loops!

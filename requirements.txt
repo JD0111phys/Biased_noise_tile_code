@@ -1,14 +1,23 @@
+# Python >= 3.12 required (codedistance dependency)
+
 # Core computation & data structures
 numpy
 scipy
 pandas
 
 # Quantum Simulation
-stim
-sinter
+stim>=1.13.0
+sinter>=1.12.0
 bposd
-ldpc
+ldpc>=2.3.10
 galois
+
+# Circuit distance checking
+# Install via: pip install git+https://github.com/m-webster/codeDistancePYPI.git
+codedistance
+igraph>=0.11.8
+ortools>=9.14.6206
+python-sat>=1.8.dev24
 
 # Utilities
 tqdm

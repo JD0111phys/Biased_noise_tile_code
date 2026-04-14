@@ -1,14 +1,18 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+import sys
 import numpy as np
+from pathlib import Path
 from codedistance import *
 
-import sys
 if len(sys.argv) > 1:
     CircuitFile = sys.argv[1]
 else:
-    CircuitFile = "/Users/sayandipdhara/Desktop/Biased_noise_codes/biased_noise_tile_code/finite_bias_circuit_level_simulation/circuit_8_rounds.stim"
+    # Default to the CSS example circuit bundled with the repo.
+    # Run: python distance_check.py <path/to/circuit.stim> to check any circuit.
+    _here = Path(__file__).resolve().parent
+    CircuitFile = str(_here / "distance_check" / "circuit_css_l6_m6.stim")
 
 qc = stim.Circuit.from_file(CircuitFile)
 
