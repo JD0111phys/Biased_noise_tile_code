@@ -12,6 +12,9 @@ bposd
 ldpc>=2.3.10
 galois
 
+# BP-OSD decoder bridge for sinter (circuit-level simulation)
+stimbposd
+
 # Circuit distance checking
 # Install via: pip install git+https://github.com/m-webster/codeDistancePYPI.git
 codedistance
