@@ -1,0 +1,26 @@
+Metadata-Version: 2.4
+Name: pauli_distribution
+Version: 0.1.0
+Summary: Pauli Strings distribution in Clifford circuits using Stim
+Author-email: Pedro Medina <pumg005@gmail.com>
+License-Expression: MIT
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: stim>=1.11.0
+Requires-Dist: pytest
+
+## Installation
+
+Inside the root directory run:
+
+pip install -e .
+
+## Run examples
+
+python -m examples.file_name
+
+## Run tests
+
+Inside the `tests` directory run:
+
+python -m pytest py_test.py -q

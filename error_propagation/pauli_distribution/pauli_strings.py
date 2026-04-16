@@ -8,17 +8,264 @@
 #- compute effective Pauli probabilities,
 #- run iterative simulations until convergence.
 
-from stim import PauliString, Tableau
 import random
-from collections import Counter
 from typing import List, Tuple, Dict, Optional, Any, cast
 import json
+import bisect
+from stim import PauliString, Tableau  # type: ignore
 
 GateOp = Tuple[str, List[int]]
+_ENTANGLING_GATES = {"CX", "CZ", "CY"}
 
-#----------------- APPLY ERROR FUNCTIONS -----------------#
+_SINGLE_QUBIT_ERROR_CHOICES: Tuple[str, ...] = ("I", "X", "Y", "Z")
+_TWO_QUBIT_ERROR_CHOICES: Tuple[str, ...] = (
+    "II", "IX", "IY", "IZ",
+    "XI", "XX", "XY", "XZ",
+    "YI", "YX", "YY", "YZ",
+    "ZI", "ZX", "ZY", "ZZ",
+)
 
 
+def _cumulative_weights(weights: Tuple[float, ...]) -> Tuple[float, ...]:
+    running = 0.0
+    cumulative: List[float] = []
+    for weight in weights:
+        running += weight
+        cumulative.append(running)
+    return tuple(cumulative)
+
+
+def _sample_from_cumulative(choices: Tuple[str, ...], cumulative_weights: Tuple[float, ...]) -> str:
+    total = cumulative_weights[-1]
+    r = random.random() * total
+    for choice, cutoff in zip(choices, cumulative_weights):
+        if r < cutoff:
+            return choice
+    return choices[-1]
+
+# Precompute cumulative weights for single-qubit gates (shared across all platforms).
+_H_WEIGHTS: Tuple[float, ...] = (
+    0.9970831318064503,
+    0.0004876108844646676,
+    0.0009721305333010022,
+    0.0014571267757840511,
+)
+_S_WEIGHTS: Tuple[float, ...] = (
+    0.9970240579376571,
+    1.4922560645502791e-07,
+    1.4922560645502791e-07,
+    0.00297564361112998,
+)
+_H_CUM_WEIGHTS: Tuple[float, ...] = _cumulative_weights(_H_WEIGHTS)
+_S_CUM_WEIGHTS: Tuple[float, ...] = _cumulative_weights(_S_WEIGHTS)
+
+_SC_CX_WEIGHTS: Tuple[float, ...] = (
+    0.9971089697418947, 2.7934102919680015e-08, 2.3735336432129106e-06,
+    0.0007172714715934017, 2.7711807848440628e-08, 2.5207188356080046e-07,
+    0.00023518786621833793, 2.5886150639697902e-08, 2.3732742409909857e-06,
+    0.00023518786621884447, 2.5207741582294885e-07, 2.5808276786498663e-08,
+    0.0007125772927424889, 2.5887020388415394e-08, 2.579754807691126e-08,
+    0.0009853957792419835,
+)
+_TI_CNOT_CX_WEIGHTS: Tuple[float, ...] = (
+    0.9970978744492904, 3.3560719574221576e-07, 0.00028982952089751796,
+    0.00038654305587448867, 0.0005800408405701243, 3.275762831961293e-07,
+    9.677438302829744e-05, 2.860259729967063e-07, 0.0002907835269792061,
+    9.66060922966e-05, 1.386814579007467e-07, 2.580023215695282e-07,
+    0.0009661361035463306, 1.1755776622990322e-07, 3.137816749348987e-07,
+    0.00019363479484440366,
+)
+_TI_CZ_CZ_WEIGHTS: Tuple[float, ...] = (
+    0.997064919955593, 2.6383893972359296e-08, 2.6383893986237084e-08,
+    0.0009970331256010934, 2.6383893972359296e-08, 2.3561940468153075e-08,
+    2.3561940468153075e-08, 2.3567419182857208e-08, 2.6383893972359296e-08,
+    2.3561940468153075e-08, 2.3561940468153075e-08, 2.3567419182857208e-08,
+    0.0009970331256011072, 2.356741916897942e-08, 2.3567419182857208e-08,
+    0.0009407197401905265,
+)
+_NA_CZ_WEIGHTS: Tuple[float, ...] = (
+    0.997068734751876, 2.0905858801045785e-08, 2.090585879410689e-08,
+    0.0009635217661934578, 2.0489466380502197e-08, 2.04892314434324e-08,
+    2.0489231478126868e-08, 2.0489466380502197e-08, 2.0489466380502197e-08,
+    2.0489231471187974e-08, 2.0489231450371292e-08, 2.048946638744109e-08,
+    0.0008600034582691082, 2.0905858801045785e-08, 2.090585879410689e-08,
+    0.0009735718210506714,
+)
+
+# New weights for p=0.0003, bias=100
+_H_WEIGHTS_NEW: Tuple[float, ...] = (
+    0.9997144181762936,
+    4.834081745078156e-05,
+    9.519846944372468e-05,
+    0.00014204253681199264,
+)
+_S_WEIGHTS_NEW: Tuple[float, ...] = (
+    0.9996827965731347,
+    1.5707913905149695e-06,
+    1.5707913905704807e-06,
+    0.0003140618440840848,
+)
+_H_CUM_WEIGHTS_NEW: Tuple[float, ...] = _cumulative_weights(_H_WEIGHTS_NEW)
+_S_CUM_WEIGHTS_NEW: Tuple[float, ...] = _cumulative_weights(_S_WEIGHTS_NEW)
+
+_TI_CNOT_CX_WEIGHTS_NEW: Tuple[float, ...] = (
+    0.9996826627051202, 3.871878605024581e-07, 3.161601127623509e-05,
+    4.206004715857914e-05, 6.351519125390864e-05, 7.327011635610559e-08,
+    1.049705853823496e-05, 5.570422793171881e-08, 3.228913113600268e-05,
+    1.0495067282408066e-05, 4.837642238880724e-08, 5.537032096020189e-08,
+    0.00010518675304017205, 5.371825789052265e-08, 5.6022615262107944e-08,
+    2.094838537313598e-05,
+)
+_TI_CZ_CZ_WEIGHTS_NEW: Tuple[float, ...] = (
+    0.9996700777607745, 2.932078710313202e-07, 2.9320787104519797e-07,
+    0.00011097798700750866, 2.932078710313202e-07, 2.617988403008642e-07,
+    2.617988403078031e-07, 2.618055985753598e-07, 2.9320787108683133e-07,
+    2.617988403008642e-07, 2.617988403078031e-07, 2.6180559860311536e-07,
+    0.00011097798700754335, 2.61805598561482e-07, 2.618055985684209e-07,
+    0.00010469901597084247,
+)
+_SC_CX_WEIGHTS_NEW: Tuple[float, ...] = (
+    0.9997120035791485, 2.428535562093437e-07, 4.770600885786735e-07,
+    7.191009869316617e-05, 2.4049821617522227e-07, 2.3815435346019598e-07,
+    2.373405636916376e-05, 2.3564202483034036e-07, 4.7470405568211804e-07,
+    2.3734056369739687e-05, 2.381544111570988e-07, 2.356422783775236e-07,
+    7.143903652123695e-05, 2.3564235698825264e-07, 2.3564249961721684e-07,
+    9.432517905710175e-05,
+)
+_NA_CZ_WEIGHTS_NEW: Tuple[float, ...] = (
+    0.999724015042887, 2.0289319017235963e-07, 2.0289319017929852e-07,
+    6.748924684244623e-05, 1.5707930015734783e-07, 1.5707906874523614e-07,
+    1.5707906872441946e-07, 1.570793002059201e-07, 1.570793001851034e-07,
+    1.5707906871748056e-07, 1.5707906872441946e-07, 1.570793001989812e-07,
+    9.322047378600845e-05, 2.028931902001152e-07, 2.0289319017929852e-07,
+    0.00010251355972256543,
+)
+
+_TI_CNOT_CX_CUM_WEIGHTS_NEW: Tuple[float, ...] = _cumulative_weights(_TI_CNOT_CX_WEIGHTS_NEW)
+_TI_CZ_CZ_CUM_WEIGHTS_NEW: Tuple[float, ...] = _cumulative_weights(_TI_CZ_CZ_WEIGHTS_NEW)
+_SC_CX_CUM_WEIGHTS_NEW: Tuple[float, ...] = _cumulative_weights(_SC_CX_WEIGHTS_NEW)
+_NA_CZ_CUM_WEIGHTS_NEW: Tuple[float, ...] = _cumulative_weights(_NA_CZ_WEIGHTS_NEW)
+
+# Type alias for cleaner code
+GateErrorChannelType = Dict[str, Tuple[Tuple[str, ...], Tuple[float, ...], Tuple[float, ...], int]]
+# Precomputed layer metadata type: tuple of (targets, two-qubit pairs, choices, weights, arity)
+PrecomputedLayerItemType = Tuple[List[int], Tuple[Tuple[int, int], ...], Tuple[str, ...], Tuple[float, ...], int]
+
+# Supported (p_param, system_bias) combinations for each platform
+_SUPPORTED_ERROR_PARAMS: Dict[str, list[Tuple[float, float]]] = {
+    'ideal': [],
+    'superconducting': [(0.003, 10000.0), (0.0003, 100.0)],
+    'trapped_ion_cnot': [(0.003, 10000.0), (0.0003, 100.0)],
+    'trapped_ion_cz': [(0.003, 10000.0), (0.0003, 100.0)],
+    'neutral_atom': [(0.003, 10000.0), (0.0003, 100.0)],
+}
+
+_GATE_ERROR_CHANNELS: Dict[Tuple[str, float, float], GateErrorChannelType] = {
+    # p=0.003, bias=10000 (original)
+    ('superconducting', 0.003, 10000.0): {
+        'CX': (_TWO_QUBIT_ERROR_CHOICES, _SC_CX_WEIGHTS, _cumulative_weights(_SC_CX_WEIGHTS), 2),
+        'H': (_SINGLE_QUBIT_ERROR_CHOICES, _H_WEIGHTS, _H_CUM_WEIGHTS, 1),
+        'S': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, _S_CUM_WEIGHTS, 1),
+        'S_DAG': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, _S_CUM_WEIGHTS, 1),
+    },
+    ('trapped_ion_cnot', 0.003, 10000.0): {
+        'CX': (_TWO_QUBIT_ERROR_CHOICES, _TI_CNOT_CX_WEIGHTS, _cumulative_weights(_TI_CNOT_CX_WEIGHTS), 2),
+        'H': (_SINGLE_QUBIT_ERROR_CHOICES, _H_WEIGHTS, _H_CUM_WEIGHTS, 1),
+        'S': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, _S_CUM_WEIGHTS, 1),
+        'S_DAG': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, _S_CUM_WEIGHTS, 1),
+    },
+    ('trapped_ion_cz', 0.003, 10000.0): {
+        'CZ': (_TWO_QUBIT_ERROR_CHOICES, _TI_CZ_CZ_WEIGHTS, _cumulative_weights(_TI_CZ_CZ_WEIGHTS), 2),
+        'H': (_SINGLE_QUBIT_ERROR_CHOICES, _H_WEIGHTS, _H_CUM_WEIGHTS, 1),
+        'S': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, _S_CUM_WEIGHTS, 1),
+        'S_DAG': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, _S_CUM_WEIGHTS, 1),
+    },
+    ('neutral_atom', 0.003, 10000.0): {
+        'CZ': (_TWO_QUBIT_ERROR_CHOICES, _NA_CZ_WEIGHTS, _cumulative_weights(_NA_CZ_WEIGHTS), 2),
+        'H': (_SINGLE_QUBIT_ERROR_CHOICES, _H_WEIGHTS, _H_CUM_WEIGHTS, 1),
+        'S': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, _S_CUM_WEIGHTS, 1),
+        'S_DAG': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS, _S_CUM_WEIGHTS, 1),
+    },
+    # p=0.0003, bias=100 (new)
+    ('superconducting', 0.0003, 100.0): {
+        'CX': (_TWO_QUBIT_ERROR_CHOICES, _SC_CX_WEIGHTS_NEW, _SC_CX_CUM_WEIGHTS_NEW, 2),
+        'H': (_SINGLE_QUBIT_ERROR_CHOICES, _H_WEIGHTS_NEW, _H_CUM_WEIGHTS_NEW, 1),
+        'S': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS_NEW, _S_CUM_WEIGHTS_NEW, 1),
+        'S_DAG': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS_NEW, _S_CUM_WEIGHTS_NEW, 1),
+    },
+    ('trapped_ion_cnot', 0.0003, 100.0): {
+        'CX': (_TWO_QUBIT_ERROR_CHOICES, _TI_CNOT_CX_WEIGHTS_NEW, _TI_CNOT_CX_CUM_WEIGHTS_NEW, 2),
+        'H': (_SINGLE_QUBIT_ERROR_CHOICES, _H_WEIGHTS_NEW, _H_CUM_WEIGHTS_NEW, 1),
+        'S': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS_NEW, _S_CUM_WEIGHTS_NEW, 1),
+        'S_DAG': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS_NEW, _S_CUM_WEIGHTS_NEW, 1),
+    },
+    ('trapped_ion_cz', 0.0003, 100.0): {
+        'CZ': (_TWO_QUBIT_ERROR_CHOICES, _TI_CZ_CZ_WEIGHTS_NEW, _TI_CZ_CZ_CUM_WEIGHTS_NEW, 2),
+        'H': (_SINGLE_QUBIT_ERROR_CHOICES, _H_WEIGHTS_NEW, _H_CUM_WEIGHTS_NEW, 1),
+        'S': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS_NEW, _S_CUM_WEIGHTS_NEW, 1),
+        'S_DAG': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS_NEW, _S_CUM_WEIGHTS_NEW, 1),
+    },
+    ('neutral_atom', 0.0003, 100.0): {
+        'CZ': (_TWO_QUBIT_ERROR_CHOICES, _NA_CZ_WEIGHTS_NEW, _NA_CZ_CUM_WEIGHTS_NEW, 2),
+        'H': (_SINGLE_QUBIT_ERROR_CHOICES, _H_WEIGHTS_NEW, _H_CUM_WEIGHTS_NEW, 1),
+        'S': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS_NEW, _S_CUM_WEIGHTS_NEW, 1),
+        'S_DAG': (_SINGLE_QUBIT_ERROR_CHOICES, _S_WEIGHTS_NEW, _S_CUM_WEIGHTS_NEW, 1),
+    },
+    ('ideal', 0.003, 10000.0): {},
+    ('ideal', 0.0003, 100.0): {},
+}
+
+def _get_unsupported_gate_error_message(gate_name: str, platform: str) -> str:
+    """Generate unsupported gate error message on-demand."""
+    platform_names = {
+        'superconducting': 'superconducting',
+        'trapped_ion_cnot': 'trapped ion',
+        'trapped_ion_cz': 'trapped ion CZ',
+        'neutral_atom': 'neutral atom',
+    }
+    platform_label = platform_names.get(platform, platform)
+    return f"Unsupported gate {gate_name} for {platform_label} platform."
+
+def _validate_error_params(qubit_platform: str, p_param: float, system_bias: float) -> None:
+    """Validate that (p_param, system_bias) is supported for the given platform.
+    
+    Raises:
+        ValueError: If the combination is not supported.
+    """
+    if qubit_platform == 'ideal':
+        return
+    
+    supported = _SUPPORTED_ERROR_PARAMS.get(qubit_platform, [])
+    if (p_param, system_bias) not in supported:
+        raise ValueError(
+            f"Error channels for p={p_param}, bias={system_bias} "
+            f"have not been implemented for platform '{qubit_platform}'. "
+            f"Supported combinations: {supported}"
+        )
+
+def _get_platform_channels(
+    qubit_platform: str, p_param: float, system_bias: float
+) -> Optional[GateErrorChannelType]:
+    """Get gate error channels for a platform with specific error parameters.
+    
+    Returns None if platform is 'ideal', otherwise returns the channel dict.
+    
+    Raises:
+        ValueError: If the (p_param, system_bias) combination is not supported.
+    """
+    if qubit_platform == 'ideal':
+        return None
+    
+    _validate_error_params(qubit_platform, p_param, system_bias)
+    
+    key = (qubit_platform, p_param, system_bias)
+    platform_channels = _GATE_ERROR_CHANNELS.get(key)
+    if platform_channels is None:
+        raise ValueError(f"Unsupported qubit platform: {qubit_platform}")
+    return platform_channels
+#########################################################################################################
+#########################################################################################################
+#---------------------------------------- APPLY ERROR FUNCTIONS ----------------------------------------#
 def apply_error(
         pauli: PauliString,
         identity: str,
@@ -38,16 +285,39 @@ def apply_error(
     Returns:
         Updated Pauli string with errors applied to the qubits in keep_qubits.
     """
+    if not keep_qubits:
+        return pauli
+
     error = list(identity)
+    has_non_identity_error = False
+    # Precompute cumulative weights for bisect lookup (faster than chained if-elif)
+    cumulative_weights = (
+        weights_applied[0],
+        weights_applied[0] + weights_applied[1],
+        weights_applied[0] + weights_applied[1] + weights_applied[2],
+    )
+    total = cumulative_weights[2] + weights_applied[3]
+    pauli_choices = ("X", "Y", "Z", "I")
+    
     # Applying Error probability to every qubit in pauli string
     for j in keep_qubits:
-        error_char = random.choices(['X', 'Y', 'Z', 'I'], weights=weights_applied, k=1)[0]
+        r = random.random() * total
+        # Use bisect to find the error type (faster than chained comparisons)
+        error_idx = bisect.bisect_right(cumulative_weights, r)
+        error_char = pauli_choices[error_idx]
+        
         error[j] = error_char
+        if error_char != 'I':
+            has_non_identity_error = True
+
+    if not has_non_identity_error:
+        return pauli
+
     error_str = ''.join(error)
     # Updating pauli string
     pauli *= PauliString(error_str)
     return pauli
-
+##################################################################################
 def pairwise_tuples(lst: List[int]) -> List[Tuple[int, int]]:
     """
     Groups a flat list of integers into consecutive (control, target) pairs.
@@ -65,8 +335,16 @@ def pairwise_tuples(lst: List[int]) -> List[Tuple[int, int]]:
     if len(lst) % 2 != 0:
         raise ValueError("List must contain an even number of elements.")
     return [(lst[i], lst[i+1]) for i in range(0, len(lst), 2)]
-
-def apply_gate_error_channel(pauli: PauliString, gate_name: str, targets: List[int], identity: str, qubit_platform: str) -> PauliString:
+#########################################################################################
+def apply_gate_error_channel(
+    pauli: PauliString,
+    gate_name: str,
+    targets: List[int],
+    identity: str,
+    qubit_platform: str,
+    p_param: float = 0.003,
+    system_bias: float = 10000.0,
+) -> PauliString:
     """
     Applies a hardware-specific gate error channel to a Pauli string.
 
@@ -90,271 +368,158 @@ def apply_gate_error_channel(pauli: PauliString, gate_name: str, targets: List[i
         qubit_platform: Hardware platform that determines which noise model to
             use. Supported values: 'superconducting', 'trapped_ion_cnot',
             'trapped_ion_cz', 'neutral_atom', 'ideal'.
+        p_param: Error parameter (default 0.003 for original channels).
+        system_bias: Bias parameter (default 10000.0 for original channels).
 
     Returns:
         The modified Pauli string after the gate's error channel has been applied.
 
     Raises:
-        ValueError: If gate_name is not supported for the given qubit_platform.
+        ValueError: If gate_name is not supported for the given qubit_platform
+            or if (p_param, system_bias) is not implemented for the platform.
     """
+    if qubit_platform == 'ideal':
+        return pauli
+
+    platform_channels = _get_platform_channels(qubit_platform, p_param, system_bias)
+    # Type guard: guaranteed non-None after _get_platform_channels() for non-ideal
+    assert platform_channels is not None
+
+    channel = platform_channels.get(gate_name)
+    if channel is None:
+        msg = _get_unsupported_gate_error_message(gate_name, qubit_platform)
+        raise ValueError(msg)
+
+    choices, _weights, cumulative, arity = channel
     error = list(identity)
-    if gate_name in ['CX', 'CZ']:
-        tupled_targets = pairwise_tuples(targets)
+    has_non_identity_error = False
+
+    if arity == 2:
+        for control, target in pairwise_tuples(targets):
+            error_char = _sample_from_cumulative(choices, cumulative)
+            error[control] = error_char[0]
+            error[target] = error_char[1]
+            if error_char != "II":
+                has_non_identity_error = True
     else:
-        tupled_targets = []
+        for target in targets:
+            error_char = _sample_from_cumulative(choices, cumulative)
+            error[target] = error_char
+            if error_char != "I":
+                has_non_identity_error = True
 
+    if not has_non_identity_error:
+        return pauli
 
-    if qubit_platform == 'superconducting':
-        # error probabilities for superconducting CX gate
-        if gate_name == 'CX':
-            err_dict_superconducting_CX = {'II': 0.9971089697418947,
- 'IX': 2.7934102919680015e-08,
- 'IY': 2.3735336432129106e-06,
- 'IZ': 0.0007172714715934017,
- 'XI': 2.7711807848440628e-08,
- 'XX': 2.5207188356080046e-07,
- 'XY': 0.00023518786621833793,
- 'XZ': 2.5886150639697902e-08,
- 'YI': 2.3732742409909857e-06,
- 'YX': 0.00023518786621884447,
- 'YY': 2.5207741582294885e-07,
- 'YZ': 2.5808276786498663e-08,
- 'ZI': 0.0007125772927424889,
- 'ZX': 2.5887020388415394e-08,
- 'ZY': 2.579754807691126e-08,
- 'ZZ': 0.0009853957792419835}
-            err_dict_values = list(err_dict_superconducting_CX.values())
-            for control, target in tupled_targets:
-                error_char = random.choices(['II', 'IX', 'IY', 'IZ', 'XI', 'XX', 'XY','XZ',
-                                             'YI', 'YX', 'YY', 'YZ', 'ZI', 'ZX', 'ZY', 'ZZ'],
-                                            weights=err_dict_values, k=1)[0]
-                error_char_list = list(error_char)
-                error[control] = error_char_list[0]
-                error[target] = error_char_list[1]
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'H':
-            err_dict_superconducting_H = {'II': 0.9970831318064503,
- 'XI': 0.0004876108844646676,
- 'YI': 0.0009721305333010022,
- 'ZI': 0.0014571267757840511}
-            err_dict_values = list(err_dict_superconducting_H.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
-                error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'S' or gate_name == 'S_DAG':
-            err_dict_superconducting_S = {'II': 0.9970240579376571,
- 'IX': 1.4922560645502791e-07,
- 'IY': 1.4922560645502791e-07,
- 'IZ': 0.00297564361112998}
-            err_dict_values = list(err_dict_superconducting_S.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
-                error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
+    pauli *= PauliString(''.join(error))
+    return pauli
+##########################################################################################
+def apply_precomputed_layer_gate_and_idle_error(
+    pauli: PauliString,
+    identity: str,
+    idle_qubits: List[int],
+    idle_weights: List[float],
+    layer_ops: List[
+        Tuple[
+            List[int],
+            Tuple[Tuple[int, int], ...],
+            Tuple[str, ...],
+            Tuple[float, ...],
+            int,
+        ]
+    ],
+) -> PauliString:
+    """Apply gate-channel noise for an entire disjoint layer plus one idle-noise round."""
+    error = list(identity)
+    has_non_identity_error = False
+
+    # Unpack idle weights once for faster access
+    idle_x, idle_y, idle_z, idle_i = idle_weights
+    idle_x_cutoff = idle_x
+    idle_y_cutoff = idle_x_cutoff + idle_y
+    idle_z_cutoff = idle_y_cutoff + idle_z
+    idle_total = idle_z_cutoff + idle_i
+
+    for (
+        gate_targets,
+        two_qubit_pairs,
+        choices,
+        cumulative_weights,
+        arity,
+    ) in layer_ops:
+        if arity == 2:
+            for control, target in two_qubit_pairs:
+                error_char = _sample_from_cumulative(choices, cumulative_weights)
+                error[control] = error_char[0]
+                error[target] = error_char[1]
+                if error_char != "II":
+                    has_non_identity_error = True
         else:
-            raise ValueError(f"Unsupported gate {gate_name} for superconducting platform.")
-        
-
-    elif qubit_platform == 'trapped_ion_cnot':
-        if gate_name == 'CX':
-            err_dict_trapped_ion_cnot_CX = {'II': 0.9970978744492904,
- 'IX': 3.3560719574221576e-07,
- 'IY': 0.00028982952089751796,
- 'IZ': 0.00038654305587448867,
- 'XI': 0.0005800408405701243,
- 'XX': 3.275762831961293e-07,
- 'XY': 9.677438302829744e-05,
- 'XZ': 2.860259729967063e-07,
- 'YI': 0.0002907835269792061,
- 'YX': 9.66060922966e-05,
- 'YY': 1.386814579007467e-07,
- 'YZ': 2.580023215695282e-07,
- 'ZI': 0.0009661361035463306,
- 'ZX': 1.1755776622990322e-07,
- 'ZY': 3.137816749348987e-07,
- 'ZZ': 0.00019363479484440366}
-            err_dict_values = list(err_dict_trapped_ion_cnot_CX.values())
-            for control, target in tupled_targets:
-
-                error_char = random.choices(['II', 'IX', 'IY', 'IZ', 'XI', 'XX', 'XY','XZ',
-                                             'YI', 'YX', 'YY', 'YZ', 'ZI', 'ZX', 'ZY', 'ZZ'],
-                                            weights=err_dict_values, k=1)[0]
-                error_char_list = list(error_char)
-                error[control] = error_char_list[0]
-                error[target] = error_char_list[1]
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'H':
-            err_dict_trapped_ion_cnot_H = {'II': 0.9970831318064503,
- 'XI': 0.0004876108844646676,
- 'YI': 0.0009721305333010022,
- 'ZI': 0.0014571267757840511}
-            err_dict_values = list(err_dict_trapped_ion_cnot_H.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
+            for target in gate_targets:
+                error_char = _sample_from_cumulative(choices, cumulative_weights)
                 error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'S' or gate_name == 'S_DAG':
-            err_dict_trapped_ion_cnot_S = {'II': 0.9970240579376571,
- 'IX': 1.4922560645502791e-07,
- 'IY': 1.4922560645502791e-07,
- 'IZ': 0.00297564361112998}
-            err_dict_values = list(err_dict_trapped_ion_cnot_S.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
-                error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
+                if error_char != "I":
+                    has_non_identity_error = True
+
+    for qubit in idle_qubits:
+        r = random.random() * idle_total
+        if r < idle_x_cutoff:
+            error_char = "X"
+        elif r < idle_y_cutoff:
+            error_char = "Y"
+        elif r < idle_z_cutoff:
+            error_char = "Z"
         else:
-            raise ValueError(f"Unsupported gate {gate_name} for trapped ion platform.")
-        
+            error_char = "I"
+        error[qubit] = error_char
+        if error_char != 'I':
+            has_non_identity_error = True
 
-    elif qubit_platform == 'trapped_ion_cz':
-        if gate_name == 'CZ':
-            # error probabilities for trapped ion CZ gate
-            err_dict_trapped_ion_cz_CZ = {'II': 0.997064919955593,
- 'IX': 2.6383893972359296e-08,
- 'IY': 2.6383893986237084e-08,
- 'IZ': 0.0009970331256010934,
- 'XI': 2.6383893972359296e-08,
- 'XX': 2.3561940468153075e-08,
- 'XY': 2.3561940468153075e-08,
- 'XZ': 2.3567419182857208e-08,
- 'YI': 2.6383893972359296e-08,
- 'YX': 2.3561940468153075e-08,
- 'YY': 2.3561940468153075e-08,
- 'YZ': 2.3567419182857208e-08,
- 'ZI': 0.0009970331256011072,
- 'ZX': 2.356741916897942e-08,
- 'ZY': 2.3567419182857208e-08,
- 'ZZ': 0.0009407197401905265}
-            err_dict_values = list(err_dict_trapped_ion_cz_CZ.values())
-            for control, target in tupled_targets:
-                error_char = random.choices(['II', 'IX', 'IY', 'IZ', 'XI', 'XX', 'XY','XZ',
-                                             'YI', 'YX', 'YY', 'YZ', 'ZI', 'ZX', 'ZY', 'ZZ'],
-                                            weights=err_dict_values, k=1)[0]
-                error_char_list = list(error_char)
-                error[control] = error_char_list[0]
-                error[target] = error_char_list[1]
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'H':
-            # error probabilities for trapped ion Hadamard gate
-            err_dict_trapped_ion_cz_H ={'II': 0.9970831318064503,
- 'XI': 0.0004876108844646676,
- 'YI': 0.0009721305333010022,
- 'ZI': 0.0014571267757840511}
-            err_dict_values = list(err_dict_trapped_ion_cz_H.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
-                error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'S' or gate_name == 'S_DAG':
-            err_dict_trapped_ion_cz_S = {'II': 0.9970240579376571,
- 'IX': 1.4922560645502791e-07,
- 'IY': 1.4922560645502791e-07,
- 'IZ': 0.00297564361112998}
-            err_dict_values = list(err_dict_trapped_ion_cz_S.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
-                error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        else:
-            raise ValueError(f"Unsupported gate {gate_name} for trapped ion_cz platform.")
-        
+    if not has_non_identity_error:
+        return pauli
 
-    elif qubit_platform == 'neutral_atom':
-        if gate_name == 'CZ':
-                            # error probabilities for neutral atom CZ gate
-            err_dict_neutral_atom_CZ = {'II': 0.997068734751876,
- 'IX': 2.0905858801045785e-08,
- 'IY': 2.090585879410689e-08,
- 'IZ': 0.0009635217661934578,
- 'XI': 2.0489466380502197e-08,
- 'XX': 2.04892314434324e-08,
- 'XY': 2.0489231478126868e-08,
- 'XZ': 2.0489466380502197e-08,
- 'YI': 2.0489466380502197e-08,
- 'YX': 2.0489231471187974e-08,
- 'YY': 2.0489231450371292e-08,
- 'YZ': 2.048946638744109e-08,
- 'ZI': 0.0008600034582691082,
- 'ZX': 2.0905858801045785e-08,
- 'ZY': 2.090585879410689e-08,
- 'ZZ': 0.0009735718210506714}
-            err_dict_values = list(err_dict_neutral_atom_CZ.values())
-            for control, target in tupled_targets:
-                error_char = random.choices(['II', 'IX', 'IY', 'IZ', 'XI', 'XX', 'XY','XZ',
-                                             'YI', 'YX', 'YY', 'YZ', 'ZI', 'ZX', 'ZY', 'ZZ'],
-                                            weights=err_dict_values, k=1)[0]
-                error_char_list = list(error_char)
-                error[control] = error_char_list[0]
-                error[target] = error_char_list[1]
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'H':
-            # error probabilities for neutral atom Hadamard gate
-            err_dict_neutral_atom_H = {'II': 0.9970831318064503,
- 'XI': 0.0004876108844646676,
- 'YI': 0.0009721305333010022,
- 'ZI': 0.0014571267757840511}
-            err_dict_values = list(err_dict_neutral_atom_H.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
-                error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        elif gate_name == 'S' or gate_name == 'S_DAG':
-            err_dict_neutral_atom_S = {'II': 0.9970240579376571,
- 'IX': 1.4922560645502791e-07,
- 'IY': 1.4922560645502791e-07,
- 'IZ': 0.00297564361112998}
-            err_dict_values = list(err_dict_neutral_atom_S.values())
-            for target in targets:
-                error_char = random.choices(['I', 'X', 'Y', 'Z'],
-                                            weights=err_dict_values, k=1)[0]
-                error[target] = error_char
-            error_str = ''.join(error)
-            # Updating pauli string
-            pauli *= PauliString(error_str)
-        else:
-            raise ValueError(f"Unsupported gate {gate_name} for neutral atom platform.")
-    elif qubit_platform == 'ideal':
-        # No error for ideal platform
-        pass
-    else:
-        raise ValueError(f"Unsupported qubit platform: {qubit_platform}")
+    pauli *= PauliString(''.join(error))
+    return pauli
+##########################################################################################################
+##########################################################################################################
+#---------------------------------------- GATE FUNCTIONS ------------------------------------------------#
+def _coalesce_disjoint_gate_layers(
+    gate_sequence: List[GateOp],
+    keep_qubits: List[int],
+) -> List[Tuple[List[GateOp], List[int]]]:
+    """Group consecutive disjoint gates into one logical timestep.
 
-    # Placeholder for actual error channel logic
-    # This function can be expanded based on specific error models for each gate
-    return pauli 
+    Gates remain in-order within each layer; a new layer starts when the next gate
+    overlaps any qubit already used in the current layer.
+    """
+    layers: List[Tuple[List[GateOp], List[int]]] = []
+    current_ops: List[GateOp] = []
+    current_used: set[int] = set()
 
-#----------------- GATE FUNCTIONS -----------------#
+    for gate_name, targets in gate_sequence:
+        target_set = set(targets)
+        if current_ops and current_used.intersection(target_set):
+            idle_qubits = [q for q in keep_qubits if q not in current_used]
+            layers.append((current_ops, idle_qubits))
+            current_ops = []
+            current_used = set()
+
+        current_ops.append((gate_name, targets))
+        current_used.update(target_set)
+
+    if current_ops:
+        idle_qubits = [q for q in keep_qubits if q not in current_used]
+        layers.append((current_ops, idle_qubits))
+
+    return layers
+
+
+def _layer_has_entangling_gate(layer_ops: List[GateOp]) -> bool:
+    """Return True when a layer contains at least one entangling gate."""
+    for gate_name, _targets in layer_ops:
+        if gate_name in _ENTANGLING_GATES:
+            return True
+    return False
 
 def convert_gate_sequence(gate_sequence: List[GateOp], conversion_type: str) -> List[GateOp]:
     """
@@ -379,7 +544,6 @@ def convert_gate_sequence(gate_sequence: List[GateOp], conversion_type: str) -> 
         as gate_sequence, containing the decomposed gate operations.
     """
     converted_sequence: List[GateOp] = []
-    
     for gate_type, qubits in gate_sequence:
         if conversion_type == "CZ_native" and gate_type == "CX":
             # Convert CX to H CZ H, with H on odd entries
@@ -396,7 +560,7 @@ def convert_gate_sequence(gate_sequence: List[GateOp], conversion_type: str) -> 
             converted_sequence.append(("H", odd_qubits))
             converted_sequence.append(("S_DAG", odd_qubits))
         elif conversion_type == "CNOT_native" and gate_type == "CZ":
-            # Convert CZ to H CX H, with H on odd entries  
+            # Convert CZ to H CX H, with H on odd entries
             odd_qubits = [qubits[i] for i in range(1, len(qubits), 2)]
             converted_sequence.append(("H", odd_qubits))
             converted_sequence.append(("CX", qubits))
@@ -410,7 +574,6 @@ def convert_gate_sequence(gate_sequence: List[GateOp], conversion_type: str) -> 
         else:
             # Keep the gate as is
             converted_sequence.append((gate_type, qubits))
-    
     return converted_sequence
 
 def gate_operation(
@@ -440,59 +603,57 @@ def gate_operation(
         KeyError: If gate_name is not a key in TABLEAUS.
     """
     return pauli.after(TABLEAUS[gate_name], targets=targets)
-
+###################################################################################
+###################################################################################
 #----------------- FUNCTION TO GET SAMPLES OF PAULI STRINGS -----------------#
 
 def get_pauli_string(
-        keep_qubits: List[int],
-        samples: int = 100,
-        p: float = 0.003,
-        system_bias: float = 1000.0,
     gate_sequence: Optional[List[GateOp]] = None,
-        ancilla: Optional[List[int]] = None,
-        qubit_platform: str = "superconducting",
-        random_seed: Optional[int] = None,
-    use_compressed_space: bool = True,
-    initial_pauli_string: Optional[str] = None
-) -> List[int]:
+    samples: int = 100,
+    p: float = 0.003,
+    system_bias: float = 1000.0,
+    qubit_platform: str = "superconducting",
+    random_seed: Optional[int] = None,
+    initial_pauli_string: Optional[str] = None,
+    skip_idle_errors_on_edge_entangling_layers: bool = True,
+) -> Dict[int, int]:
     """
-    Generates a flattened list of noisy Pauli values by simulating gate operations and error insertion.
+    Generates cumulative Pauli error counts by propagating Pauli strings through
+    coalesced gate layers and sampling the corresponding noise channels.
 
     Args:
-        keep_qubits: List of qubit indices to keep in the output (including ancilla).
+        gate_sequence: List of gates to apply, each as (gate_name, [targets]).
+            For two-qubit gates, targets must be a flat list of control-target
+            pairs: [ctrl0, tgt0, ctrl1, tgt1, ...].
+            All qubits (data and ancilla) are derived from this sequence.
         samples: Number of Pauli string samples to generate.
         p: Total single-qubit error probability, split as
             px = py = p / (2 + system_bias) and
             pz = p * system_bias / (2 + system_bias).
         system_bias: Dephasing bias parameter controlling the relative weight of
             Z errors against X/Y errors.
-        gate_sequence: List of gates to apply, each as (gate_name, [targets]).
-            For two-qubit gates, targets must be a flat list of control-target
-            pairs: [ctrl0, tgt0, ctrl1, tgt1, ...].
-        ancilla: List of ancilla qubit indices used for measurement errors.
         qubit_platform: The platform type of the qubits (e.g., "superconducting", "neutral_atom").
             "ideal" means no hardware-specific gate error channel is applied
             (native gate compilation), but generic stochastic error insertion
             is still performed.
         random_seed: Random seed for reproducible error generation (optional).
-        use_compressed_space: If True, operates only on used qubits for massive speedup (default).
         initial_pauli_string: Optional initial Pauli string in compressed qubit space.
             If not provided, starts from identity on all compressed qubits.
+        skip_idle_errors_on_edge_entangling_layers: If True, do not apply idle
+            errors on the first and last coalesced layers that contain at least
+            one entangling gate (CX/CZ/CY). This is useful for tile-code style
+            schedules where edge entangling rounds should not incur idle noise.
 
     Returns:
-        A flattened list of Pauli values (0=I, 1=X, 2=Y, 3=Z) with length
-        samples * len(sorted(set(keep_qubits) | set(ancilla))). Data is appended
-        sample-by-sample, with qubits ordered by compressed index induced from
-        sorted(set(keep_qubits) | set(ancilla)).
+        Accumulated counts ``{0: I_count, 1: X_count, 2: Y_count, 3: Z_count}``.
+        Consecutive disjoint gates are automatically grouped into single logical
+        timesteps to prevent over-application of idle-noise.
 
     Raises:
-        NotImplementedError: If use_compressed_space is False.
         ValueError: If samples is negative, p is outside [0, 1], or system_bias is negative.
     """
     if gate_sequence is None:
         gate_sequence = []
-    if ancilla is None:
-        ancilla = []
 
     if samples < 0:
         raise ValueError("samples must be non-negative.")
@@ -501,91 +662,240 @@ def get_pauli_string(
     if system_bias < 0.0:
         raise ValueError("system_bias must be non-negative.")
 
+    # Extract all used qubits from gate sequence
+    all_used_qubits_set: set[int] = set()
+    for gate_name, targets in gate_sequence:
+        all_used_qubits_set.update(targets)
+    all_used_qubits = sorted(all_used_qubits_set)
+    keep_qubits = all_used_qubits  # All qubits extracted from gate sequence
+
     # Set random seed if provided for reproducible results
     if random_seed is not None:
         random.seed(random_seed)
 
-    if not use_compressed_space:
-        raise NotImplementedError("Non-compressed path is not supported. Set use_compressed_space=True.")
-
-    # Use compressed qubit space for massive speedup
-    all_used_qubits = sorted(set(keep_qubits) | set(ancilla))
-    compressed_size = len(all_used_qubits)
+    # number of qubits in the compressed space (only those involved in gates)
+    compressed_size = len(keep_qubits)
     # Create mapping: original_qubit_idx -> compressed_idx
-    qubit_to_compressed = {original: compressed for compressed, original in enumerate(all_used_qubits)}
-    
+    # if there is no compresssion, this will just be an identity mapping
+    qubit_to_compressed = {
+        original: compressed
+        for compressed, original in enumerate(keep_qubits)
+    }
     # Compress gate sequences
     compressed_gate_sequence: List[GateOp] = []
     for gate_name, targets in gate_sequence:
-        compressed_targets = [qubit_to_compressed[t] for t in targets if t in qubit_to_compressed]
-        if compressed_targets:  # Only add if targets exist in compressed space
-            compressed_gate_sequence.append((gate_name, compressed_targets))
-    
+        compressed_targets = [
+            qubit_to_compressed[t]
+            for t in targets
+            if t in qubit_to_compressed
+        ]
+        # Only add if targets exist in compressed space
+        if compressed_targets:
+            compressed_gate_sequence.append((gate_name, compressed_targets))    
     # Compress qubit lists
-    compressed_keep_qubits = [qubit_to_compressed[q] for q in keep_qubits if q in qubit_to_compressed]
-    #compressed_ancilla = [qubit_to_compressed[q] for q in ancilla if q in qubit_to_compressed]
-
+    compressed_keep_qubits = [
+        qubit_to_compressed[q]
+        for q in keep_qubits
+        if q in qubit_to_compressed
+    ]
+    # Validate initial_pauli_string length if provided
     if initial_pauli_string is not None and len(initial_pauli_string) != compressed_size:
         raise ValueError(
             "initial_pauli_string length must match compressed qubit count "
             f"({compressed_size})."
         )
-    
     identity = "_" * compressed_size
-    initial_state = identity if initial_pauli_string is None else initial_pauli_string
+    initial_state = (
+        identity
+        if initial_pauli_string is None
+        else initial_pauli_string
+    )
+    # legacy variable names for clarity in the Monte Carlo sampling section below
     effective_gate_sequence = compressed_gate_sequence
     effective_keep_qubits = compressed_keep_qubits
-    # For manipulations with only ancillas
-    #effective_ancilla = compressed_ancilla
-    # Interval [0,1]. X ->[0,px) Y -> [px,px+py) Z -> [px+py,p) I -> [p, 1 - p] p =px + py + pz
-    pz = p * (system_bias / (system_bias + 2))  # Adjust pz based on bias 
-    px = p / (2+system_bias)
+    # Always coalesce disjoint gates into layers
+    gate_layers: List[Tuple[List[GateOp], List[int]]] = (
+        _coalesce_disjoint_gate_layers(
+            effective_gate_sequence,
+            effective_keep_qubits,
+        )
+    )
+    edge_entangling_layer_indices: set[int] = set()
+    if skip_idle_errors_on_edge_entangling_layers and gate_layers:
+        entangling_indices = [
+            i
+            for i, (layer_ops, _idle_qubits) in enumerate(gate_layers)
+            if _layer_has_entangling_gate(layer_ops)
+        ]
+        if entangling_indices:
+            edge_entangling_layer_indices.add(entangling_indices[0])
+            edge_entangling_layer_indices.add(entangling_indices[-1])
+    # Precompute metadata for each layer
+    precomputed_layers: List[List[PrecomputedLayerItemType]] = []
+    platform_channels = _get_platform_channels(qubit_platform, p, system_bias)
+    for layer_ops, _ in gate_layers:
+        layer_meta: List[PrecomputedLayerItemType] = []
+        if platform_channels is not None:
+            for gate_name, gate_targets in layer_ops:
+                channel = platform_channels.get(gate_name)
+                if channel is None:
+                    raise ValueError(_get_unsupported_gate_error_message(gate_name, qubit_platform))
+
+                choices, _gate_weights, gate_cumulative_weights, arity = channel
+                # Two-qubit pair extraction
+                two_qubit_pairs: Tuple[Tuple[int, int], ...] = (
+                    tuple(pairwise_tuples(gate_targets))
+                    if arity == 2
+                    else ()
+                )
+                layer_meta.append(
+                    (
+                        gate_targets,
+                        two_qubit_pairs,
+                        choices,
+                        gate_cumulative_weights,
+                        arity,
+                    )
+                )
+        precomputed_layers.append(layer_meta)
+    # Error probabilities - split based on bias
+    # Interval [0,1]: X->[0,px), Y->[px,px+py), Z->[px+py,p), I->[p,1-p]
+    # where p = px + py + pz
+    pz = p * (system_bias / (system_bias + 2))
+    px = p / (2 + system_bias)
     py = px
     p = px + py + pz
     weights = [px, py, pz, 1 - p]
-    weights_init_meas: List[float] = [0, 0, py + pz, 1 - (py + pz)] #  (X basis prep and meas)
-    # Precompute gate's Tableau
-    TABLEAU_CACHE = {name: Tableau.from_named_gate(name) for name, _ in effective_gate_sequence}
-    flattened_result: List[int] = []
+    # X basis prep and measurement error: no X, only Y and Z
+    weights_init_meas: List[float] = [0, 0, py + pz, 1 - (py + pz)]
+    # Precompute Clifford gate tableaus
+    TABLEAU_CACHE = {
+        name: Tableau.from_named_gate(name)
+        for name, _ in effective_gate_sequence
+    }
+    ############# MONTE CARLO SAMPLING #################
+    # Track only non-identity outcomes; identity is recovered from the total count.
+    x_count = 0
+    y_count = 0
+    z_count = 0
     if qubit_platform != 'ideal':
         for _ in range(samples):
 
-            # Convert pauli string to stim's PauliString
+            # Start from the initial Pauli string and apply preparation noise.
             pauli = PauliString(initial_state)
-            # INIT error
-            pauli = apply_error(pauli, identity, effective_keep_qubits, weights_init_meas) # init error |+> -> |->
-            # Circuit
-            for gate in effective_gate_sequence:
-                # Gate operation under conjugation
-                pauli = gate_operation(pauli, gate[0], gate[1], TABLEAUS=TABLEAU_CACHE)
-                # GATE's error channel
-                pauli = apply_gate_error_channel(pauli, gate[0], gate[1], identity, qubit_platform=qubit_platform)
-                # ERROR IDLE Qubits during gate
-                pauli = apply_error(pauli, identity, [j for j in effective_keep_qubits if j not in gate[1]], weights)
+            # Initialization error (X-basis prep: |+> input, measure in Z).
+            pauli = apply_error(
+                pauli,
+                identity,
+                effective_keep_qubits,
+                weights_init_meas,
+            )
+            # Propagate each coalesced layer: ideal Clifford evolution, then
+            # the platform-specific gate channel and any idle-qubit noise.
+            for layer_index, ((layer_ops, idle_qubits), layer_meta) in enumerate(zip(
+                gate_layers,
+                precomputed_layers,
+            )):
+                for gate_name, gate_targets in layer_ops:
+                    pauli = gate_operation(
+                        pauli,
+                        gate_name,
+                        gate_targets,
+                        TABLEAUS=TABLEAU_CACHE,
+                    )
+                effective_idle_qubits = (
+                    []
+                    if layer_index in edge_entangling_layer_indices
+                    else idle_qubits
+                )
+                pauli = apply_precomputed_layer_gate_and_idle_error(
+                    pauli,
+                    identity,
+                    effective_idle_qubits,
+                    weights,
+                    layer_meta,
+                )
 
-            # ERROR BEFORE MEASUREMENT
-            pauli = apply_error(pauli, identity, effective_keep_qubits, weights_init_meas)
+            # Measurement error.
+            pauli = apply_error(
+                pauli,
+                identity,
+                effective_keep_qubits,
+                weights_init_meas,
+            )
 
-            flattened_result.extend(list(pauli)) # type: ignore
+            # Count only X/Y/Z errors; identity is inferred after the loop.
+            for value in pauli:
+                pauli_value = int(value)
+                if pauli_value == 1:
+                    x_count += 1
+                elif pauli_value == 2:
+                    y_count += 1
+                elif pauli_value == 3:
+                    z_count += 1
     else:
         # Ideal compilation path: skip hardware-specific gate error channel.
         for _ in range(samples):
             pauli = PauliString(initial_state)
-            # INIT error
-            pauli = apply_error(pauli, identity, effective_keep_qubits, weights_init_meas)
-            for gate in effective_gate_sequence:
-                pauli = gate_operation(pauli, gate[0], gate[1], TABLEAUS=TABLEAU_CACHE)
-                pauli = apply_error(pauli, identity, effective_keep_qubits, weights)
-            # ERROR BEFORE MEASUREMENT
-            pauli = apply_error(pauli, identity, effective_keep_qubits, weights_init_meas)
+            # Initialization error.
+            pauli = apply_error(
+                pauli,
+                identity,
+                effective_keep_qubits,
+                weights_init_meas,
+            )
+            for layer_index, (layer_ops, idle_qubits) in enumerate(gate_layers):
+                for gate_name, gate_targets in layer_ops:
+                    pauli = gate_operation(
+                        pauli,
+                        gate_name,
+                        gate_targets,
+                        TABLEAUS=TABLEAU_CACHE,
+                    )
+                effective_idle_qubits = (
+                    []
+                    if layer_index in edge_entangling_layer_indices
+                    else effective_keep_qubits
+                )
+                pauli = apply_error(
+                    pauli,
+                    identity,
+                    effective_idle_qubits,
+                    weights,
+                )
+            # Measurement error.
+            pauli = apply_error(
+                pauli,
+                identity,
+                effective_keep_qubits,
+                weights_init_meas,
+            )
 
-            flattened_result.extend(list(pauli)) # type: ignore
-
-    return flattened_result
-
+            # Count only X/Y/Z errors; identity is inferred after the loop.
+            for value in pauli:
+                pauli_value = int(value)
+                if pauli_value == 1:
+                    x_count += 1
+                elif pauli_value == 2:
+                    y_count += 1
+                elif pauli_value == 3:
+                    z_count += 1
+    
+    # Calculate identity count based on total observations and error counts
+    total_observations = samples * compressed_size
+    identity_count = (
+        total_observations - (x_count + y_count + z_count)
+    )
+    return {0: identity_count, 1: x_count, 2: y_count, 3: z_count}
+###############################################################################
+###############################################################################
 #----------------- STORING DATA FUNCTIONS -----------------#
-
-def save_running_counts(running_counts: Dict[int, int], output_file: str, append: bool = False, seed: Optional[int] = None) -> None:
+def save_running_counts(
+    running_counts: Dict[int, int],
+    output_file: str,
+    append: bool = False,
+    seed: Optional[int] = None,
+) -> None:
     """
     Save running counts and seed to a JSONL file.
     
@@ -602,11 +912,11 @@ def save_running_counts(running_counts: Dict[int, int], output_file: str, append
     data: Dict[str, Any] = {
         'counts': running_counts,
         'seed': seed
-    } 
-    with open(output_file, mode) as f:
+    }
+    with open(output_file, mode, encoding='utf-8') as f:
         json.dump(data, f)
         f.write('\n')
-
+###############################################################################
 def load_running_counts(input_file: str) -> Dict[int, int]:
     """
     Load cumulative running counts from a JSONL file.
@@ -618,13 +928,12 @@ def load_running_counts(input_file: str) -> Dict[int, int]:
         Dictionary with cumulative counts {0: I_count, 1: X_count, 2: Y_count, 3: Z_count}.
 
     Notes:
-        - Supports legacy lines that store counts directly (without a 'counts' key).
         - Ignores seed metadata if present.
         - Skips malformed JSON lines and continues processing.
     """
     running_counts = {0: 0, 1: 0, 2: 0, 3: 0}
     try:
-        with open(input_file, 'r') as f:
+        with open(input_file, 'r', encoding='utf-8') as f:
             for line in f:
                 if line.strip():  # Skip empty lines
                     try:
@@ -635,73 +944,72 @@ def load_running_counts(input_file: str) -> Dict[int, int]:
                     if not isinstance(data, dict):
                         continue
                     data_dict = cast(Dict[Any, Any], data)
-                    # Handle both old format (direct counts) and new format (with seed)
-                    if 'counts' in data_dict:
-                        counts = data_dict['counts']
-                    else:
-                        counts = data_dict  # Backward compatibility with old format
+                    # Extract counts from new format
+                    if 'counts' not in data_dict:
+                        continue
+                    counts = data_dict['counts']
                     if not isinstance(counts, dict):
                         continue
                     counts_dict = cast(Dict[Any, Any], counts)
                     for pauli_type in [0, 1, 2, 3]:
-                        running_counts[pauli_type] += int(
-                            counts_dict.get(str(pauli_type), counts_dict.get(pauli_type, 0))
+                        # Get count using string or int key
+                        count_val = counts_dict.get(
+                            str(pauli_type),
+                            counts_dict.get(pauli_type, 0),
                         )
+                        running_counts[pauli_type] += int(count_val)
     except FileNotFoundError:
         pass  # Return initialized counts if file doesn't exist
     return running_counts
+################################################################################
+################################################################################
 
-def update_running_counts(
-    running_counts: Dict[int, int], 
-    new_pauli_values: List[int]
-) -> Dict[int, int]:
-    """
-    Update running counts in place with new samples.
-    
-    Args:
-        running_counts: Current counts for each Pauli type {0: I_count, 1: X_count, ...}.
-        new_pauli_values: Flattened list of new Pauli values (0=I, 1=X, 2=Y, 3=Z).
-        
-    Returns:
-        The same running_counts dictionary after in-place update.
-    """
-    new_counts = Counter(new_pauli_values)
-    
-    # Add to running counts (assumes all pauli_types are pre-initialized)
-    for pauli_type in [0, 1, 2, 3]:  # I, X, Y, Z
-        running_counts[pauli_type] += new_counts.get(pauli_type, 0)
-    
-    return running_counts
-
-#----------------- CALCULATE EFFECTIVE PROBABILITIES -----------------#
-
-def effective_pauli_probabilities_from_counts(
-    running_counts: Dict[int, int]
-) -> Dict[str, float]:
-    """
-    Calculates effective probabilities from precomputed running counts.
-    
-    Args:
-        running_counts: Dictionary with counts {0: I_count, 1: X_count, 2: Y_count, 3: Z_count}.
-            Missing keys are treated as zero.
-        
-    Returns:
-        Dictionary with fixed keys 'I', 'X', 'Y', 'Z' mapped to their effective
-        probabilities. If total count is zero, all returned probabilities are 0.0.
-    """
-    total = sum(running_counts.values())
-    pauli_map = {0: 'I', 1: 'X', 2: 'Y', 3: 'Z'}
-    return {pauli_map[k]: running_counts.get(k, 0) / total if total > 0 else 0.0 for k in pauli_map}
+def _resolve_convergence_metric(
+    convergence_mode: str,
+    convergence_x: float,
+    convergence_y: float,
+    convergence_z: float,
+    convergence_bias: float,
+) -> float:
+    """Resolve scalar convergence from configured mode."""
+    normalized_mode = convergence_mode.strip().lower()
+    if normalized_mode == "max_xyz":
+        return max(convergence_x, convergence_y, convergence_z)
+    if normalized_mode == "bias":
+        return convergence_bias
+    if normalized_mode == "combined":
+        combined = convergence_x
+        if convergence_y > combined:
+            combined = convergence_y
+        if convergence_z > combined:
+            combined = convergence_z
+        if convergence_bias > combined:
+            combined = convergence_bias
+        return combined
+    raise ValueError(
+        "convergence_mode must be one of: 'max_xyz', 'bias', 'combined'. "
+        f"Got: {convergence_mode}"
+    )
 
 #----------------- MAIN SIMULATION FUNCTION WITH CONVERGENCE CHECK -----------------#
 
 def error_propagation_simulation(
-    keep_qubits: List[int], ancilla: List[int],
-    p_param: float, system_bias: float, qubit_platform: str,
     gate_sequence: List[GateOp],
-    samples_per_iteration: int,total_samples: int, chosen_seed: int,
-    timestamp: str
-    ) -> Tuple[str,str]: 
+    p_param: float,
+    system_bias: float,
+    qubit_platform: str,
+    samples_per_iteration: int,
+    total_samples: int,
+    chosen_seed: int,
+    timestamp: str,
+    save_every: int = 1,
+    resume_counts_file: Optional[str] = None,
+    resume_progress_file: Optional[str] = None,
+    convergence_mode: str = "bias",
+    convergence_threshold: float = 1e-07,
+    required_consecutive_iterations: int = 30,
+    skip_idle_errors_on_edge_entangling_layers: bool = True,
+) -> Tuple[str, str]:
     """
     Run iterative Pauli-error propagation simulation until convergence or sample cap.
 
@@ -710,16 +1018,37 @@ def error_propagation_simulation(
     effective X/Y/Z probabilities.
 
     Args:
-        keep_qubits: Qubit indices included in the sampled output.
-        ancilla: Ancilla qubit indices for measurement-error insertion.
+        gate_sequence: Circuit gate sequence as (gate_name, targets) tuples.
+            All qubits (data and ancilla) are derived from this sequence.
         p_param: Total single-qubit error probability.
         system_bias: Dephasing bias parameter used to split p_param into X/Y/Z components.
         qubit_platform: Hardware platform noise model identifier.
-        gate_sequence: Circuit gate sequence as (gate_name, targets) tuples.
         samples_per_iteration: Number of samples generated per iteration.
         total_samples: Maximum total sample budget used to compute max iterations.
-        chosen_seed: Base random seed. Iteration i uses chosen_seed + i.
+        chosen_seed: Optional initial random seed used to initialize sampling.
+            Subsequent iterations continue from the ongoing RNG state and are
+            not reseeded. When resuming from prior counts, this seed is used to
+            initialize the resumed sampling stream.
         timestamp: Suffix used in output filenames.
+        save_every: Number of iterations to buffer before appending progress
+            and counts to disk. Use 1 to preserve per-iteration writes.
+        resume_counts_file: Optional path to an existing running-counts JSONL
+            file. If provided, counts are loaded and simulation continues from
+            those accumulated statistics instead of starting from zero.
+        resume_progress_file: Optional path to an existing effective-probabilities
+            progress file. If provided, new rows are appended and iteration
+            numbering continues from the last numeric iteration in this file.
+        convergence_mode: Scalar convergence metric selection:
+            - "max_xyz": max of X/Y/Z probability deltas
+            - "bias": absolute delta of bias only
+            - "combined": max(max_xyz, bias_delta)
+        convergence_threshold: Iteration is counted as converged when selected
+            scalar convergence metric is below this threshold.
+        required_consecutive_iterations: Number of consecutive converged
+            iterations required before stopping.
+        skip_idle_errors_on_edge_entangling_layers: If True, pass through to
+            get_pauli_string() so idle errors are skipped on the first and last
+            coalesced layers that contain entangling gates.
 
     Returns:
         Tuple of (progress_file, counts_file) output paths.
@@ -735,109 +1064,284 @@ def error_propagation_simulation(
         raise ValueError("samples_per_iteration must be > 0.")
     if total_samples < 0:
         raise ValueError("total_samples must be >= 0.")
+    if save_every <= 0:
+        raise ValueError("save_every must be > 0.")
+    if convergence_threshold <= 0.0:
+        raise ValueError("convergence_threshold must be > 0.")
+    if required_consecutive_iterations <= 0:
+        raise ValueError("required_consecutive_iterations must be > 0.")
 
-    initial_samples = min(samples_per_iteration, total_samples)
-    new_samples = get_pauli_string(
-        samples=initial_samples,
-        keep_qubits=keep_qubits,
-        p=p_param,
-        system_bias=system_bias,
-        qubit_platform=qubit_platform,
-        gate_sequence=gate_sequence,
-        ancilla=ancilla,
-        random_seed=chosen_seed
-    )
+    normalized_convergence_mode = convergence_mode.strip().lower()
+    if normalized_convergence_mode not in {"max_xyz", "bias", "combined"}:
+        raise ValueError(
+            "convergence_mode must be one of: 'max_xyz', 'bias', 'combined'. "
+            f"Got: {convergence_mode}"
+        )
 
-    # Initialize running counts for efficient probability calculation
-    running_counts = {0: 0, 1: 0, 2: 0, 3: 0}  # I, X, Y, Z
-    # Update running counts with initial samples
-    running_counts = update_running_counts(running_counts, new_samples)
-    # Calculate effective probabilities
-    effective_current = effective_pauli_probabilities_from_counts(running_counts)
-    # Calculate bias for initial probabilities
-    denominator = effective_current["X"] + effective_current["Y"]
-    bias = effective_current["Z"] / denominator if denominator != 0 else float('inf')
+    # Validate error parameters for the given platform
+    _validate_error_params(qubit_platform, p_param, system_bias)
 
-    # Save initial running counts
-    counts_file = f"running_counts_{qubit_platform}_{timestamp}.jsonl"
-    save_running_counts(running_counts, counts_file, append=False, seed=chosen_seed)
+    # Extract all used qubits from gate sequence
+    all_used_qubits_set: set[int] = set()
+    for _gate_name, targets in gate_sequence:
+        all_used_qubits_set.update(targets)
+    all_used_qubits = sorted(all_used_qubits_set)
+    output_qubit_count = len(all_used_qubits)
 
-    # Initialize progress file with header and initial results
-    progress_file = f"effective_probs_{qubit_platform}_{timestamp}.txt"
-    with open(progress_file, "w") as f:
-        f.write("# Iteration,I_Probability,X_Probability,Y_Probability,Z_Probability,BIAS,I_Convergence,X_Convergence,Y_Convergence,Z_Convergence,Max_Convergence,Consecutive_Convergence_Count\n")
-        f.write(f"0,{effective_current['I']:.8f},{effective_current['X']:.8f},{effective_current['Y']:.8f},{effective_current['Z']:.8f},{bias},Initial,Initial,Initial,Initial,Initial,0\n")
+    if output_qubit_count <= 0:
+        raise ValueError("At least one qubit in gate_sequence is required.")
+
+    is_resuming = (resume_counts_file is not None) or (resume_progress_file is not None)
+
+    # Initialize running counts for efficient probability calculation.
+    if resume_counts_file is not None:
+        try:
+            with open(resume_counts_file, 'r', encoding='utf-8'):
+                pass
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(f"Resume counts file not found: {resume_counts_file}") from exc
+
+        # Avoid reusing the exact initial seed from the loaded run.
+        prior_seed = None
+        try:
+            with open(resume_counts_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        data = json.loads(stripped)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(data, dict):
+                        continue
+                    data_dict = cast(Dict[Any, Any], data)
+                    if 'seed' not in data_dict:
+                        continue
+                    seed_value = data_dict.get('seed')
+                    if seed_value is None:
+                        continue
+                    try:
+                        prior_seed = int(seed_value)
+                        break
+                    except (TypeError, ValueError):
+                        continue
+        except FileNotFoundError:
+            pass
+        if prior_seed is not None and chosen_seed == prior_seed:
+            chosen_seed += 1
+
+        # Seed resumed sampling stream so continuation batches are reproducible.
+        random.seed(chosen_seed)
+
+        loaded_counts = load_running_counts(resume_counts_file)
+        running_counts = {
+            0: loaded_counts.get(0, 0),
+            1: loaded_counts.get(1, 0),
+            2: loaded_counts.get(2, 0),
+            3: loaded_counts.get(3, 0),
+        }
+        loaded_total = running_counts[0] + running_counts[1] + running_counts[2] + running_counts[3]
+        if loaded_total > 0 and loaded_total % output_qubit_count != 0:
+            raise ValueError(
+                "Loaded counts are incompatible with current output qubit count. "
+                f"total_count={loaded_total}, output_qubit_count={output_qubit_count}."
+            )
+        generated_samples = loaded_total // output_qubit_count
+    else:
+        initial_samples = min(samples_per_iteration, total_samples)
+        initial_counts = get_pauli_string(
+            gate_sequence=gate_sequence,
+            samples=initial_samples,
+            p=p_param,
+            system_bias=system_bias,
+            qubit_platform=qubit_platform,
+            random_seed=chosen_seed,
+            skip_idle_errors_on_edge_entangling_layers=skip_idle_errors_on_edge_entangling_layers,
+        )
+        running_counts = {
+            0: initial_counts.get(0, 0),
+            1: initial_counts.get(1, 0),
+            2: initial_counts.get(2, 0),
+            3: initial_counts.get(3, 0),
+        }
+        generated_samples = initial_samples
+
+    # Compute scalar probabilities directly to avoid per-iteration dict allocation.
+    total = running_counts[0] + running_counts[1] + running_counts[2] + running_counts[3]
+    if total > 0:
+        i_prob = running_counts[0] / total
+        x_prob = running_counts[1] / total
+        y_prob = running_counts[2] / total
+        z_prob = running_counts[3] / total
+    else:
+        i_prob = x_prob = y_prob = z_prob = 0.0
+
+    denominator = x_prob + y_prob
+    bias = z_prob / denominator if denominator != 0 else float('inf')
+    previous_bias = bias
+
+    counts_file = resume_counts_file if resume_counts_file is not None else f"running_counts_{qubit_platform}_{timestamp}.jsonl"
+    progress_file = resume_progress_file if resume_progress_file is not None else f"effective_probs_{qubit_platform}_{timestamp}.txt"
+
+    if not is_resuming:
+        save_running_counts(running_counts, counts_file, append=False, seed=chosen_seed)
+        with open(progress_file, "w", encoding="utf-8") as f:
+            f.write("# Iteration,I_Probability,X_Probability,Y_Probability,Z_Probability,BIAS,I_Convergence,X_Convergence,Y_Convergence,Z_Convergence,Max_Convergence,Consecutive_Convergence_Count,Generated_Samples\n")
+            f.write(f"0,{i_prob:.8f},{x_prob:.8f},{y_prob:.8f},{z_prob:.8f},{bias},Initial,Initial,Initial,Initial,Initial,0,{generated_samples}\n")
+    else:
+        if resume_progress_file is None:
+            with open(progress_file, "w", encoding="utf-8") as f:
+                f.write("# Iteration,I_Probability,X_Probability,Y_Probability,Z_Probability,BIAS,I_Convergence,X_Convergence,Y_Convergence,Z_Convergence,Max_Convergence,Consecutive_Convergence_Count,Generated_Samples\n")
+                f.write(f"0,{i_prob:.8f},{x_prob:.8f},{y_prob:.8f},{z_prob:.8f},{bias},Resumed,Resumed,Resumed,Resumed,Resumed,0,{generated_samples}\n")
+        else:
+            with open(progress_file, "a", encoding="utf-8") as f:
+                f.write(
+                    f"# Resuming from prior data at samples={generated_samples}, "
+                    f"I={i_prob:.8f}, X={x_prob:.8f}, Y={y_prob:.8f}, Z={z_prob:.8f}, BIAS={bias}\n"
+                )
+        with open(progress_file, "a", encoding="utf-8") as f:
+            f.write(
+                f"# Convergence config: mode={convergence_mode}, "
+                f"threshold={convergence_threshold:.2e}, "
+                f"required_consecutive_iterations={required_consecutive_iterations}\n"
+            )
 
     convergence = 100.0
-    iteration = 0
-    generated_samples = initial_samples
-    consecutive_convergence_count = 0  # Track consecutive iterations with convergence < 1e-05
-    required_consecutive_iterations = 30  # Number of consecutive iterations required
-
-    # convergence threshold is set to 1e-07 to ensure we are well below the 1e-05 target for bias convergence, accounting for fluctuations in X and Y probabilities
+    if is_resuming:
+        last_iteration = 0
+        try:
+            with open(progress_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith('#'):
+                        continue
+                    first_field = stripped.split(',', 1)[0]
+                    try:
+                        last_iteration = int(first_field)
+                    except ValueError:
+                        continue
+        except FileNotFoundError:
+            pass
+        iteration = last_iteration
+    else:
+        iteration = 0
+    consecutive_convergence_count = 0
+    pending_counts_rows: List[Dict[str, Any]] = []
+    pending_progress_lines: List[str] = []
+##################### start of while loop ###################################
     while consecutive_convergence_count < required_consecutive_iterations and generated_samples < total_samples:
         iteration += 1
         current_batch_samples = min(samples_per_iteration, total_samples - generated_samples)
-        
-        # Use different random seed for each iteration
-        current_seed = chosen_seed + iteration
-        
-        new_samples = get_pauli_string(
-                samples=current_batch_samples,
-                keep_qubits=keep_qubits,
-                p=p_param,
-                system_bias=system_bias,
-                qubit_platform=qubit_platform,
-                gate_sequence=gate_sequence,
-                ancilla=ancilla,
-                random_seed=current_seed
+
+        new_counts = get_pauli_string(
+            gate_sequence=gate_sequence,
+            samples=current_batch_samples,
+            p=p_param,
+            system_bias=system_bias,
+            qubit_platform=qubit_platform,
+            random_seed=None,
+            skip_idle_errors_on_edge_entangling_layers=skip_idle_errors_on_edge_entangling_layers,
         )
         generated_samples += current_batch_samples
-        
-        # Update running counts efficiently instead of recalculating from entire history
-        running_counts = update_running_counts(running_counts, new_samples)
-        effective_new = effective_pauli_probabilities_from_counts(running_counts)
-        
+        # Update running counts from per-batch counts (avoids flattened list materialization).
+        for pauli_type in [0, 1, 2, 3]:
+            running_counts[pauli_type] += new_counts.get(pauli_type, 0)
+        total = running_counts[0] + running_counts[1] + running_counts[2] + running_counts[3]
+        if total > 0:
+            new_i_prob = running_counts[0] / total
+            new_x_prob = running_counts[1] / total
+            new_y_prob = running_counts[2] / total
+            new_z_prob = running_counts[3] / total
+        else:
+            new_i_prob = new_x_prob = new_y_prob = new_z_prob = 0.0
         # Save updated running counts
-        save_running_counts(running_counts, counts_file, append=True, seed=current_seed)
-        
-        # Calculate absolute difference for convergence of all Pauli operators
-        convergence_I = abs(effective_current["I"] - effective_new["I"])
-        convergence_X = abs(effective_current["X"] - effective_new["X"])
-        convergence_Y = abs(effective_current["Y"] - effective_new["Y"])
-        convergence_Z = abs(effective_current["Z"] - effective_new["Z"])
-        
-        denominator = effective_new["X"] + effective_new["Y"]
-        bias = effective_new["Z"] / denominator if denominator != 0 else float('inf')
-        
-        # Use maximum convergence across error operators only (I is redundant due to normalization)
-        convergence = max(convergence_X, convergence_Y, convergence_Z)
-        
+        pending_counts_rows.append({
+            'counts': dict(running_counts),
+            'seed': None,
+        })       
+        # Calculate only the convergence components needed by selected mode.
+        convergence_I = float('nan')
+        convergence_X = float('nan')
+        convergence_Y = float('nan')
+        convergence_Z = float('nan')
+        convergence_bias = float('nan')
+
+        if normalized_convergence_mode in {"max_xyz", "combined"}:
+            convergence_I = abs(i_prob - new_i_prob)
+            convergence_X = abs(x_prob - new_x_prob)
+            convergence_Y = abs(y_prob - new_y_prob)
+            convergence_Z = abs(z_prob - new_z_prob)        
+        denominator = new_x_prob + new_y_prob
+        bias = new_z_prob / denominator if denominator != 0 else float('inf')
+        if normalized_convergence_mode in {"bias", "combined"}:
+            if previous_bias == float('inf') and bias == float('inf'):
+                convergence_bias = 0.0
+            else:
+                convergence_bias = abs(previous_bias - bias)
+        convergence = _resolve_convergence_metric(
+            normalized_convergence_mode,
+            convergence_X,
+            convergence_Y,
+            convergence_Z,
+            convergence_bias,
+        )
         # Check convergence criteria and update consecutive count
-        if convergence < 1e-07:
+        if convergence < convergence_threshold:
             consecutive_convergence_count += 1
         else:
             consecutive_convergence_count = 0  # Reset counter if convergence is not met
-        
         # Save progress to same file (append)
-        with open(progress_file, "a") as f:
-            f.write(f"{iteration},{effective_new['I']:.8f},{effective_new['X']:.8f},{effective_new['Y']:.8f},{effective_new['Z']:.8f},{bias},{convergence_I:.2e},{convergence_X:.2e},{convergence_Y:.2e},{convergence_Z:.2e},{convergence:.2e},{consecutive_convergence_count}\n")
-        
-        effective_current = effective_new
+        pending_progress_lines.append(
+            f"{iteration},{new_i_prob:.8f},{new_x_prob:.8f},{new_y_prob:.8f},{new_z_prob:.8f},{bias},{convergence_I:.2e},{convergence_X:.2e},{convergence_Y:.2e},{convergence_Z:.2e},{convergence:.2e},{consecutive_convergence_count},{generated_samples}\n"
+        )
+
+        if iteration % save_every == 0:
+            with open(counts_file, "a", encoding="utf-8") as f:
+                for row in pending_counts_rows:
+                    json.dump(row, f)
+                    f.write('\n')
+            pending_counts_rows.clear()
+
+            with open(progress_file, "a", encoding="utf-8") as f:
+                f.writelines(pending_progress_lines)
+            pending_progress_lines.clear()        
+        i_prob = new_i_prob
+        x_prob = new_x_prob
+        y_prob = new_y_prob
+        z_prob = new_z_prob
+        previous_bias = bias
+############################## end of while loop ##############################
+
+    # Flush remaining buffered rows/lines.
+    if pending_counts_rows:
+        with open(counts_file, "a", encoding="utf-8") as f:
+            for row in pending_counts_rows:
+                json.dump(row, f)
+                f.write('\n')
+
+    if pending_progress_lines:
+        with open(progress_file, "a", encoding="utf-8") as f:
+            f.writelines(pending_progress_lines)
 
     print(f"\nConvergence {'achieved' if consecutive_convergence_count >= required_consecutive_iterations else 'not achieved'} "
         f"after {iteration} iterations")
-    print(f"Final probabilities: I={effective_current['I']:.8f}, X={effective_current['X']:.8f}, Y={effective_current['Y']:.8f}, Z={effective_current['Z']:.8f}")
+    print(f"Final probabilities: I={i_prob:.8f}, X={x_prob:.8f}, Y={y_prob:.8f}, Z={z_prob:.8f}")
     print(f"Final bias: {bias}")
     print(f"Final convergence value: {convergence:.2e}")
     print(f"Consecutive convergence iterations: {consecutive_convergence_count}/{required_consecutive_iterations}")
 
     # Append final summary to progress file
-    with open(progress_file, "a") as f:
+    with open(progress_file, "a", encoding="utf-8") as f:
         f.write(f"# Final: Convergence {'achieved' if consecutive_convergence_count >= required_consecutive_iterations else 'not achieved'} after {iteration} iterations\n")
-        f.write(f"# Final probabilities: I={effective_current['I']:.8f}, X={effective_current['X']:.8f}, Y={effective_current['Y']:.8f}, Z={effective_current['Z']:.8f}\n")
+        f.write(f"# Final probabilities: I={i_prob:.8f}, X={x_prob:.8f}, Y={y_prob:.8f}, Z={z_prob:.8f}\n")
         f.write(f"# Final convergence value: {convergence:.2e}\n")
         f.write(f"# Final bias: {bias}\n")
+        f.write(
+            f"# Convergence config: mode={convergence_mode}, "
+            f"threshold={convergence_threshold:.2e}, "
+            f"required_consecutive_iterations={required_consecutive_iterations}\n"
+        )
         f.write(f"# Consecutive convergence iterations: {consecutive_convergence_count}/{required_consecutive_iterations}\n")
     
     return progress_file, counts_file
